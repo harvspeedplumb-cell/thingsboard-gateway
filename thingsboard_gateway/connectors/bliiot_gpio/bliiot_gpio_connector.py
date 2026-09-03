@@ -15,7 +15,7 @@
 Custom connector for the BLIIOT BL460AL-CM5002016-X26 IO board (8x DI, 4x DO), running
 under stock Raspberry Pi OS via libgpiod v2 against the RP1 gpiochip -- no vendor driver,
 no I2C/SPI expander involved. See gpio_map.py's module docstring for the confirmed
-hardware facts this connector relies on (chip index instability across reflashes, DO
+hardware facts this connector relies on (chip index instability across reflashes, DI/DO
 polarity inversion, DO "sticky output" behaviour).
 
 Also reports which WAN path (Ethernet vs the onboard 4G modem) currently holds the
@@ -105,8 +105,10 @@ class BliiotGpioConnector(Connector, Thread):
         self.__event_driven = gpio_cfg.get('eventDriven', False)
         self.__do_attr_suffix = gpio_cfg.get('doAttributeUpdateSuffix', '_set')
 
+        # Confirmed on real hardware 2026-09-03 (see gpio_map.py's module docstring): DI is
+        # inverted the same way DO is, so this default is True, not False.
         self.__di_config = self.__build_channel_config(gpio_cfg.get('digitalInputs'), DEFAULT_DI_OFFSETS,
-                                                         default_active_low=False)
+                                                         default_active_low=True)
         self.__do_config = self.__build_channel_config(gpio_cfg.get('digitalOutputs'), DEFAULT_DO_OFFSETS,
                                                          default_active_low=True)
         validate_offsets({name: cfg['offset'] for name, cfg in self.__di_config.items()},
@@ -296,7 +298,7 @@ class BliiotGpioConnector(Connector, Thread):
         changes = {}
         for offset, raw_value in zip(offsets, raw_values):
             name = self.__di_offset_to_name[offset]
-            active_low = self.__di_config[name].get('activeLow', False)
+            active_low = self.__di_config[name].get('activeLow', True)
             state = raw_to_di_state(raw_value, active_low=active_low)
             if self.__di_state.get(name) != state:
                 self.__di_state[name] = state
@@ -338,7 +340,7 @@ class BliiotGpioConnector(Connector, Thread):
                     name = self.__di_offset_to_name.get(event.line_offset)
                     if name is None:
                         continue
-                    active_low = self.__di_config[name].get('activeLow', False)
+                    active_low = self.__di_config[name].get('activeLow', True)
                     is_rising = event.event_type == gpiod.EdgeEvent.Type.RISING_EDGE
                     raw_value = gpiod.line.Value.ACTIVE if is_rising else gpiod.line.Value.INACTIVE
                     state = raw_to_di_state(raw_value, active_low=active_low)

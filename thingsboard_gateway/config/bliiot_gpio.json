@@ -8,14 +8,14 @@
     "eventDriven": false,
     "doAttributeUpdateSuffix": "_set",
     "digitalInputs": {
-      "DI1": {"offset": 12, "activeLow": false, "bias": "as-is", "debounceMs": 50},
-      "DI2": {"offset": 4,  "activeLow": false, "bias": "as-is", "debounceMs": 50},
-      "DI3": {"offset": 16, "activeLow": false, "bias": "as-is", "debounceMs": 50},
-      "DI4": {"offset": 27, "activeLow": false, "bias": "as-is", "debounceMs": 50},
-      "DI5": {"offset": 25, "activeLow": false, "bias": "as-is", "debounceMs": 50},
-      "DI6": {"offset": 22, "activeLow": false, "bias": "as-is", "debounceMs": 50},
-      "DI7": {"offset": 13, "activeLow": false, "bias": "as-is", "debounceMs": 50},
-      "DI8": {"offset": 5,  "activeLow": false, "bias": "as-is", "debounceMs": 50}
+      "DI1": {"offset": 12, "activeLow": true, "bias": "as-is", "debounceMs": 50},
+      "DI2": {"offset": 4,  "activeLow": true, "bias": "as-is", "debounceMs": 50},
+      "DI3": {"offset": 16, "activeLow": true, "bias": "as-is", "debounceMs": 50},
+      "DI4": {"offset": 27, "activeLow": true, "bias": "as-is", "debounceMs": 50},
+      "DI5": {"offset": 25, "activeLow": true, "bias": "as-is", "debounceMs": 50},
+      "DI6": {"offset": 22, "activeLow": true, "bias": "as-is", "debounceMs": 50},
+      "DI7": {"offset": 13, "activeLow": true, "bias": "as-is", "debounceMs": 50},
+      "DI8": {"offset": 5,  "activeLow": true, "bias": "as-is", "debounceMs": 50}
     },
     "digitalOutputs": {
       "DO1": {"offset": 24, "activeLow": true},

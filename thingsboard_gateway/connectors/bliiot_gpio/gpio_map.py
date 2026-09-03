@@ -40,9 +40,20 @@ Key confirmed facts (do not change these without re-verifying on real hardware):
   its safe (OFF/open) state on startup, which is why SAFE_DO_STATE and
   force_do_lines_safe() exist and are used both by the connector and by the
   independent systemd boot-time script in bliiot/systemd/.
-* DI polarity has not shown any evidence of inversion (only DO was ever found
-  inverted) but a per-channel "activeLow" override is exposed in the connector
-  config anyway, in case a future channel or a Y-board turns out to differ.
+* DI is ALSO inverted, the same way DO is -- confirmed 2026-09-03 on real hardware
+  (Kelvin26001): with nothing wired to any of the 8 DI terminals (confirmed with the
+  user), every channel read raw ACTIVE. The datasheet defines wet-contact DI logic as
+  "Logic 0 = 0-3V DC, Logic 1 = 10-30V DC" -- i.e. idle/no-signal (0V, well inside the
+  0-3V "Logic 0" band) is the manual's "Logic 0", not "Logic 1". Raw ACTIVE at idle
+  therefore does NOT match the manual's logic directly, exactly like DO -- almost
+  certainly the same opto-isolator circuit topology on this board (LED unlit at idle
+  leaves the phototransistor open and a pull-up holds the RP1 input high; a real
+  10-30V wet-contact signal turns the LED on, pulling the input low). Default
+  active_low for DI is therefore True, same as DO, applied by the same
+  do_state_to_raw()-style helpers below. This was inferred from the datasheet's stated
+  voltage-to-logic mapping plus the observed idle reading, not yet from watching one
+  specific channel flip under a real applied signal -- treat as strong but not fully
+  closed-loop confirmed until that physical test is done (see the migration log).
 """
 
 from glob import glob
@@ -170,9 +181,11 @@ def raw_to_do_state(value, active_low: bool = True) -> bool:
     return value == Value.ACTIVE
 
 
-def raw_to_di_state(value, active_low: bool = False) -> bool:
-    """Map a raw DI line Value to a logical state. DI has not been found inverted on
-    this board, so active_low defaults to False, but it is configurable per channel."""
+def raw_to_di_state(value, active_low: bool = True) -> bool:
+    """Map a raw DI line Value to a logical state. Confirmed inverted on this board's wet
+    contacts, same as DO -- see this module's docstring -- so active_low defaults to True.
+    Still configurable per channel in case a dry-contact wiring or a different board
+    variant ever differs."""
     if active_low:
         return value == Value.INACTIVE
     return value == Value.ACTIVE
