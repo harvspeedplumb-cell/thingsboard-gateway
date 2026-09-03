@@ -466,6 +466,8 @@ class BliiotGpioConnector(Connector, Thread):
         # the value changed, so the platform is guaranteed to catch up within one heartbeat
         # even if it lost the attribute for a reason this connector can't detect.
         last_heartbeat = monotonic()
+        self.__log.debug('[%s] WAN status loop starting: pollIntervalSec=%s heartbeatIntervalSec=%s',
+                          self.name, self.__wan_poll_interval_sec, self.__heartbeat_interval_sec)
         while not self.__stopped.is_set():
             try:
                 interface = self.__detect_default_route_interface()
@@ -473,6 +475,16 @@ class BliiotGpioConnector(Connector, Thread):
                 now = monotonic()
                 changed = friendly != self.__last_wan_value
                 due_for_heartbeat = (now - last_heartbeat) >= self.__heartbeat_interval_sec
+                # DEBUG-only per-tick trace, added to diagnose a live report (2026-09-03,
+                # Kelvin26001) of active_wan_interface taking minutes to reflect a route
+                # change that "ip route show default"/"nmcli device status" show updating
+                # immediately -- i.e. the delay is somewhere in this loop, not the network
+                # layer. This line fires every pollIntervalSec regardless of change/
+                # heartbeat, so the timestamps prove whether the loop is actually ticking
+                # at the configured cadence or stalling between iterations.
+                self.__log.debug('[%s] WAN poll tick: interface=%s friendly=%s last=%s changed=%s '
+                                  'due_for_heartbeat=%s', self.name, interface, friendly,
+                                  self.__last_wan_value, changed, due_for_heartbeat)
                 if changed or due_for_heartbeat:
                     self.__last_wan_value = friendly
                     last_heartbeat = now
