@@ -113,6 +113,7 @@ class BliiotGpioConnector(Connector, Thread):
                                                          default_active_low=True)
         validate_offsets({name: cfg['offset'] for name, cfg in self.__di_config.items()},
                           {name: cfg['offset'] for name, cfg in self.__do_config.items()})
+        self.__telemetry_key_by_name = self.__build_telemetry_key_map()
 
         self.__di_offset_to_name = {cfg['offset']: name for name, cfg in self.__di_config.items()}
 
@@ -235,6 +236,7 @@ class BliiotGpioConnector(Connector, Thread):
                 'activeLow': overrides.get('activeLow', default_active_low),
                 'bias': overrides.get('bias', 'as-is'),
                 'debounceMs': overrides.get('debounceMs', 50),
+                'key': overrides.get('key', name),
             }
         for name, overrides in user_cfg.items():
             if name in result:
@@ -247,8 +249,28 @@ class BliiotGpioConnector(Connector, Thread):
                 'activeLow': overrides.get('activeLow', default_active_low),
                 'bias': overrides.get('bias', 'as-is'),
                 'debounceMs': overrides.get('debounceMs', 50),
+                'key': overrides.get('key', name),
             }
         return result
+
+    def __build_telemetry_key_map(self):
+        """Maps each channel's internal name (e.g. "DI1", used for RPC/attribute
+        addressing and never renamed) to the telemetry key it should be published
+        under -- the optional per-channel "key" config field if set, else the
+        internal name itself, unchanged. Raises ValueError on a duplicate key
+        (two channels -- DI, DO, or a mix -- mapped to the same telemetry key would
+        silently overwrite each other in ThingsBoard, so this is caught at startup
+        rather than discovered later on a dashboard)."""
+        mapping = {}
+        seen_keys = {}
+        for name, cfg in {**self.__di_config, **self.__do_config}.items():
+            key = cfg.get('key', name)
+            if key in seen_keys:
+                raise ValueError(f'Channels "{seen_keys[key]}" and "{name}" are both configured with '
+                                  f'telemetry key "{key}" -- each channel needs a unique "key"')
+            seen_keys[key] = name
+            mapping[name] = key
+        return mapping
 
     def __init_gpio(self):
         self.__chip_path = find_rp1_gpiochip(self.__chip_cfg)
@@ -392,6 +414,12 @@ class BliiotGpioConnector(Connector, Thread):
     def __send_telemetry(self, telemetry):
         if not telemetry or self.__uplink_converter is None:
             return
+        # Internal channel names (DI1/DO1/...) never change -- they're what RPC calls and
+        # the <channel>_set shared attributes address. Only the outgoing telemetry key is
+        # ever renamed, via each channel's optional "key" config field (see
+        # __build_telemetry_key_map()); a channel with no "key" set publishes under its
+        # internal name unchanged, so existing configs/dashboards keep working as-is.
+        telemetry = {self.__telemetry_key_by_name.get(name, name): state for name, state in telemetry.items()}
         converted_data = self.__uplink_converter.convert(
             {'deviceName': self.__device_name, 'deviceType': self.__device_type},
             {'telemetry': telemetry})

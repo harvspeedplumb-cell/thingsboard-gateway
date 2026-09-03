@@ -77,6 +77,25 @@ safe (OFF/open) state as soon as it requests the lines at startup, and again on 
 restarting the gateway service, nor the gap before the gateway has started at all after a
 reboot -- see "Boot-time safety net" below for how that's covered.
 
+## Renaming channels for telemetry (the `key` field)
+
+Every DI/DO channel can carry an optional `"key"` field in `bliiot_gpio.json`:
+
+```json
+"DI1": {"offset": 12, "activeLow": true, "bias": "as-is", "debounceMs": 50, "key": "Pump 1 Fault"}
+```
+
+That changes what shows up in ThingsBoard's Latest Telemetry -- `"Pump 1 Fault": false`
+instead of `"DI1": false` -- so a dashboard can read meaningfully-named points instead of
+raw channel identifiers. It's **telemetry-only**: the channel's internal name (`DI1`,
+`DO1`, ...) never changes, so RPC calls (`setDo`'s `"channel"` param, `getDo`/`getDi`) and
+the `<channel>_set` shared attribute for DO control keep addressing `DO1`/`DI1` regardless
+of what `key` is set to. A channel with no `key` published under its internal name,
+unchanged -- so this is fully backward compatible with configs that predate the feature.
+Two channels sharing the same `key` fail fast at connector startup with a clear error
+(check the gateway log) rather than silently overwriting each other's telemetry in
+ThingsBoard.
+
 ## Installing
 
 1. **Pre-install `gpiod`** rather than relying on the connector's automatic
