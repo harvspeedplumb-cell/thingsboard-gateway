@@ -1,0 +1,44 @@
+{
+  "name": "BLIIOT X26 GPIO Connector",
+  "logLevel": "INFO",
+  "gpio": {
+    "chip": "auto",
+    "pollIntervalMs": 200,
+    "heartbeatIntervalSec": 60,
+    "eventDriven": false,
+    "doAttributeUpdateSuffix": "_set",
+    "digitalInputs": {
+      "DI1": {"offset": 12, "activeLow": false, "bias": "as-is", "debounceMs": 50},
+      "DI2": {"offset": 4,  "activeLow": false, "bias": "as-is", "debounceMs": 50},
+      "DI3": {"offset": 16, "activeLow": false, "bias": "as-is", "debounceMs": 50},
+      "DI4": {"offset": 27, "activeLow": false, "bias": "as-is", "debounceMs": 50},
+      "DI5": {"offset": 25, "activeLow": false, "bias": "as-is", "debounceMs": 50},
+      "DI6": {"offset": 22, "activeLow": false, "bias": "as-is", "debounceMs": 50},
+      "DI7": {"offset": 13, "activeLow": false, "bias": "as-is", "debounceMs": 50},
+      "DI8": {"offset": 5,  "activeLow": false, "bias": "as-is", "debounceMs": 50}
+    },
+    "digitalOutputs": {
+      "DO1": {"offset": 24, "activeLow": true},
+      "DO2": {"offset": 23, "activeLow": true},
+      "DO3": {"offset": 7,  "activeLow": true},
+      "DO4": {"offset": 3,  "activeLow": true}
+    }
+  },
+  "wanStatus": {
+    "enabled": true,
+    "pollIntervalSec": 15,
+    "attributeKey": "active_wan_interface",
+    "interfaceNames": {
+      "eth0": "ethernet",
+      "usb0": "cellular"
+    }
+  },
+  "devices": [
+    {
+      "name": "BLIIOT X26 IO",
+      "type": "default",
+      "converter": "BliiotGpioUplinkConverter",
+      "downlink_converter": "BliiotGpioDownlinkConverter"
+    }
+  ]
+}

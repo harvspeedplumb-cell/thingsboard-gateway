@@ -1,0 +1,18 @@
+[Unit]
+Description=BLIIOT X26 DO safe-state reset (forces all relay outputs OFF at boot)
+# Runs independently of, and before, the gateway -- see bliiot-do-safe-reset.py's
+# docstring for why this has to work even if thingsboard-gateway.service is broken.
+DefaultDependencies=no
+After=local-fs.target
+Before=thingsboard-gateway.service sysinit.target
+
+[Service]
+Type=oneshot
+# Uses the system python3 + apt's python3-libgpiod package rather than the gateway's
+# venv, so this keeps working even if that venv is missing, mid-upgrade, or broken.
+ExecStart=/usr/bin/python3 /opt/bliiot/bliiot-do-safe-reset.py
+RemainAfterExit=no
+
+[Install]
+WantedBy=sysinit.target
+WantedBy=multi-user.target
