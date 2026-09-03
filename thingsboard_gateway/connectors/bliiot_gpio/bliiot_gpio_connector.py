@@ -33,11 +33,12 @@ from threading import Event, Lock, Thread
 from time import monotonic, sleep
 
 from thingsboard_gateway.connectors.bliiot_gpio.gpio_map import (
-    DEFAULT_DI_OFFSETS,
-    DEFAULT_DO_OFFSETS,
+    DEFAULT_BOARD_TYPE,
+    GpioMapError,
     SAFE_DO_STATE,
     do_state_to_raw,
     find_rp1_gpiochip,
+    get_board_offsets,
     raw_to_di_state,
     validate_offsets,
 )
@@ -105,11 +106,23 @@ class BliiotGpioConnector(Connector, Thread):
         self.__event_driven = gpio_cfg.get('eventDriven', False)
         self.__do_attr_suffix = gpio_cfg.get('doAttributeUpdateSuffix', '_set')
 
+        # "boardType" selects which X-series daughterboard's DI/DO-to-BCM pin map to use
+        # (see gpio_map.py's BOARD_PIN_MAPS and its module docstring). Omitting it keeps
+        # every config written before this option existed working identically, since it
+        # defaults to DEFAULT_BOARD_TYPE ("X26") -- this connector's original, and so far
+        # only hardware-confirmed, board.
+        board_type = gpio_cfg.get('boardType', DEFAULT_BOARD_TYPE)
+        try:
+            default_di_offsets, default_do_offsets = get_board_offsets(board_type)
+        except GpioMapError as e:
+            self.__log.error('[%s] %s', self.name, e)
+            raise
+
         # Confirmed on real hardware 2026-09-03 (see gpio_map.py's module docstring): DI is
         # inverted the same way DO is, so this default is True, not False.
-        self.__di_config = self.__build_channel_config(gpio_cfg.get('digitalInputs'), DEFAULT_DI_OFFSETS,
+        self.__di_config = self.__build_channel_config(gpio_cfg.get('digitalInputs'), default_di_offsets,
                                                          default_active_low=True)
-        self.__do_config = self.__build_channel_config(gpio_cfg.get('digitalOutputs'), DEFAULT_DO_OFFSETS,
+        self.__do_config = self.__build_channel_config(gpio_cfg.get('digitalOutputs'), default_do_offsets,
                                                          default_active_low=True)
         validate_offsets({name: cfg['offset'] for name, cfg in self.__di_config.items()},
                           {name: cfg['offset'] for name, cfg in self.__do_config.items()})

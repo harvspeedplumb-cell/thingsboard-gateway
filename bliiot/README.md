@@ -77,6 +77,55 @@ safe (OFF/open) state as soon as it requests the lines at startup, and again on 
 restarting the gateway service, nor the gap before the gateway has started at all after a
 reboot -- see "Boot-time safety net" below for how that's covered.
 
+## Other X-series boards (the `boardType` field)
+
+This connector's DI/DO channel abstraction isn't tied to the X26 board specifically --
+BLIIOT's ARMxy BL460 carrier accepts a family of X-series IO daughterboards, and
+`bliiot_gpio.json`'s `"gpio"` block can select which one is fitted:
+
+```json
+"gpio": {
+  "boardType": "X23"
+}
+```
+
+Omit it (or leave it out entirely, as every config predating this feature does,
+including Kelvin26001's) and it defaults to `"X26"` -- so nothing changes for an existing
+deployment unless you explicitly ask for a different board.
+
+| boardType | DI | DO | Notes |
+|---|---|---|---|
+| `X26` | 8 | 4 | **Hardware-confirmed** (Kelvin26001) -- the only board actually tested on real hardware so far. |
+| `X23` | 4 | 4 | Manual-derived, not hardware-confirmed. |
+| `X28` | 12 | 0 | Manual-derived, not hardware-confirmed. |
+| `X13` | 2 | 2 (labelled `DO3`/`DO4`) | Manual-derived, not hardware-confirmed. |
+| `X14` | 4 | 0 | Manual-derived, not hardware-confirmed. |
+| `X15` | 0 | 4 | Manual-derived, not hardware-confirmed. |
+
+Every non-X26 mapping was derived from the manual's appendix ("9. 40-Pin Pin
+Multiplexing Description", p.51), which gives a physical-pin-to-BCM table per connector
+size (6-pin: X13/X14/X15/X16; 20-pin: X23/X26/X28), cross-referenced against each board's
+own port-name table (manual section 2.2.1). This method was validated by reproducing
+X26's already hardware-confirmed 12-channel mapping exactly from the 20-pin table alone
+-- but every other board here is still a paper derivation until it's actually
+smoke-tested. **Run `bliiot/test/gpio_smoke_test.py --board <type>` on the real board
+before trusting it**, the same way the X26 DI polarity bug was originally caught by
+testing rather than assuming. See `gpio_map.py`'s module docstring for the full method
+and per-board sourcing.
+
+Three board types are recognised but deliberately **not supported** by this connector,
+and `boardType` will fail fast with a clear error (not a silent no-op) if you set one of
+these:
+
+* `X10`, `X20` -- RS485/RS232-only, no DI/DO at all. Use the gateway's built-in Modbus
+  connector for these instead.
+* `X16` -- exposes 4 raw GPIO lines with no DI/DO polarity/logic convention, so this
+  connector's boolean DI/DO abstraction doesn't fit it.
+
+CAN-equipped X-series boards (X11/X12/X21/X22/X24/X25/X27/X29) aren't in this list at
+all -- the manual states they're "Not support[ed]" on the BL460 series entirely, so
+there's nothing to map.
+
 ## Renaming channels for telemetry (the `key` field)
 
 Every DI/DO channel can carry an optional `"key"` field in `bliiot_gpio.json`:
@@ -136,10 +185,12 @@ cd thingsboard-gateway   # this repo checkout
 python3 bliiot/test/gpio_smoke_test.py
 ```
 
-Read-only by default: it reports the gpiochip it found, the current state of all 12
-channels, and forces the DOs safe again before exiting. Add `--pulse DO1` (with something
-safe wired to that channel) to test an actual energise/de-energise cycle. Only once this
-looks right on the real box is it worth wiring the full connector into the gateway.
+Read-only by default: it reports the gpiochip it found, the current state of every
+channel on the board (X26's 8 DI + 4 DO by default), and forces the DOs safe again
+before exiting. Add `--board X23` (or any other type from the table above) to test a
+different board's pin map, and `--pulse DO1` (with something safe wired to that channel)
+to test an actual energise/de-energise cycle. Only once this looks right on the real box
+is it worth wiring the full connector into the gateway.
 
 **This connector's polling-based DI monitoring uses the same `gpiod` primitives
 (`request_lines`/`get_values`/`set_values`) as this project's own confirmed-working test

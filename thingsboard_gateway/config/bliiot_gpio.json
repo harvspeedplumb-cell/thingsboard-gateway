@@ -2,6 +2,7 @@
   "name": "BLIIOT X26 GPIO Connector",
   "logLevel": "INFO",
   "gpio": {
+    "boardType": "X26",
     "chip": "auto",
     "pollIntervalMs": 200,
     "heartbeatIntervalSec": 60,
