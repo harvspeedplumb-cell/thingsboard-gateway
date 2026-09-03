@@ -149,9 +149,17 @@ ThingsBoard.
 
 1. **Pre-install `gpiod`** rather than relying on the connector's automatic
    `TBUtility.install_package("gpiod")` fallback (which only triggers on first import and
-   needs PyPI reachable) -- either `sudo apt install python3-libgpiod` or, inside the
-   gateway's venv, `pip install gpiod`. Confirm the version matches what `gpioget
-   --version`/`gpioset --help` report for the CLI tools already validated on this box.
+   needs PyPI reachable). This built-in variant runs entirely under `thingsboard-gateway`'s
+   own interpreter, so `gpiod` needs to be importable **there specifically** -- on a
+   standard `.deb` install that's the gateway's own venv (typically
+   `/var/lib/thingsboard_gateway/venv`), which does not automatically see system
+   site-packages: `sudo /var/lib/thingsboard_gateway/venv/bin/pip install gpiod` (or
+   rebuild that venv with `--system-site-packages` and then `sudo apt install
+   python3-libgpiod`). A plain system-Python install alone is not enough for this
+   variant -- unlike the extension variant, there's no separate smoke-test/safe-reset
+   script here running under the system interpreter to make that sufficient. Confirm the
+   version matches what `gpioget --version`/`gpioset --help` report for the CLI tools
+   already validated on this box.
 
 2. Copy/merge `thingsboard_gateway/config/bliiot_gpio.json` into the gateway's config
    directory (wherever `tb_gateway.json` and the other connector configs live, e.g.
