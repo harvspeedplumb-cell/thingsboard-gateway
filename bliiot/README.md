@@ -5,8 +5,8 @@ A ThingsBoard IoT Gateway connector for the BLIIOT BL460AL-CM5002016-X26 IO boar
 no I2C/SPI expander chip. It talks to the RP1 GPIO controller directly through
 `libgpiod` v2, using the pin mapping and hardware behaviour confirmed on real hardware
 during this project's OS migration (see the project's migration log for the full
-history: chip index instability across reflashes, DO polarity, the "sticky output"
-finding, etc.).
+history: chip index instability across reflashes, DI/DO polarity inversion, the "sticky
+output" finding, etc.).
 
 It also reports which WAN path (Ethernet vs the onboard 4G modem) currently holds the
 default route, as a device attribute, since the box runs with Ethernet-primary /
@@ -57,12 +57,18 @@ them per-channel in the config file if a board revision or Y-board ever differs.
 6, 14, 15 and 17 (run LED, hardware watchdog, debug UART, network LED) are hard-refused
 by `validate_offsets()` even if a config file tries to use them.
 
-**DO polarity is handled for you.** The X26's DO bank is sink-type and its raw GPIO logic
-is inverted (`raw 0 = energised/closed`, `raw 1 = de-energised/open`). Every RPC method,
-shared attribute, and telemetry key this connector exposes talks in plain logical
-`true = ON` / `false = OFF` terms -- the inversion is applied internally in
-`gpio_map.do_state_to_raw()`/`raw_to_do_state()`. You never need to think about it
-unless you're editing that module.
+**DI/DO polarity is handled for you.** The X26's DO bank is sink-type and its raw GPIO
+logic is inverted (`raw 0 = energised/closed`, `raw 1 = de-energised/open`). The 8 DI
+channels are inverted the same way (`raw ACTIVE = idle/open`, `raw INACTIVE = closed
+contact`) -- confirmed on real hardware (Kelvin26001, 2026-09-03) by shorting the X26
+connector's pin 1 (DI6) to pin 11 (GND, the manual's documented dry-contact test): DI6
+alone flipped from raw ACTIVE to raw INACTIVE while the other 7 channels stayed raw
+ACTIVE. Every RPC method, shared attribute, and telemetry key this connector exposes
+talks in plain logical `true = ON`/`closed` / `false = OFF`/`open` terms -- the
+inversion is applied internally in `gpio_map.do_state_to_raw()`/`raw_to_do_state()`/
+`raw_to_di_state()` (both default to `active_low=True`, overridable per channel in
+`bliiot_gpio.json` if a dry-contact wiring or board revision ever differs). You never
+need to think about it unless you're editing that module.
 
 **DO outputs are "sticky"** -- a line keeps outputting its last value even after the
 process holding it exits or is killed. This connector forces every DO channel to its

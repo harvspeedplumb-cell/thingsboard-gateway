@@ -50,10 +50,11 @@ Key confirmed facts (do not change these without re-verifying on real hardware):
   leaves the phototransistor open and a pull-up holds the RP1 input high; a real
   10-30V wet-contact signal turns the LED on, pulling the input low). Default
   active_low for DI is therefore True, same as DO, applied by the same
-  do_state_to_raw()-style helpers below. This was inferred from the datasheet's stated
-  voltage-to-logic mapping plus the observed idle reading, not yet from watching one
-  specific channel flip under a real applied signal -- treat as strong but not fully
-  closed-loop confirmed until that physical test is done (see the migration log).
+  do_state_to_raw()-style helpers below. **Fully confirmed 2026-09-03** via a direct
+  dry-contact test on the box (X26 connector pin 1 = DI6 shorted to pin 11 = GND, the
+  manual's documented dry-contact "closed" test): DI6 alone flipped from raw ACTIVE to
+  raw INACTIVE while the other 7 channels stayed raw ACTIVE, matching this inversion
+  exactly (see the migration log).
 """
 
 from glob import glob
