@@ -450,19 +450,43 @@ class BliiotGpioConnector(Connector, Thread):
     # ------------------------------------------------------------------ WAN status ---
 
     def __wan_loop(self):
+        # NOTE: this attribute is pushed to the platform only when we (re)send it here --
+        # unlike DI/DO telemetry, ThingsBoard has no way to "pull" it. If the platform-side
+        # attribute is ever lost independently of the interface actually changing (the
+        # gateway device being deleted and recreated on the platform, the attribute being
+        # cleared by hand, a fresh device provisioned for the first time after this
+        # connector has already been running, etc.), a pure on-change publish would never
+        # notice and the attribute would just stay blank/stale until the connector process
+        # restarts and __last_wan_value re-initialises to None. Confirmed live on
+        # Kelvin26001 (2026-09-03): Harv deleted the "BLIIOT X26 IO" device on the platform
+        # while the interface value hadn't changed since, active_wan_interface never came
+        # back, and restarting thingsboard-gateway was the only thing that fixed it.
+        # Fixed the same way DI/DO already handle this (see __poll_loop's heartbeat): also
+        # force an unconditional resend every heartbeatIntervalSec, independent of whether
+        # the value changed, so the platform is guaranteed to catch up within one heartbeat
+        # even if it lost the attribute for a reason this connector can't detect.
+        last_heartbeat = monotonic()
         while not self.__stopped.is_set():
             try:
                 interface = self.__detect_default_route_interface()
                 friendly = self.__wan_interface_names.get(interface, interface) if interface else 'unknown'
-                if friendly != self.__last_wan_value:
+                now = monotonic()
+                changed = friendly != self.__last_wan_value
+                due_for_heartbeat = (now - last_heartbeat) >= self.__heartbeat_interval_sec
+                if changed or due_for_heartbeat:
                     self.__last_wan_value = friendly
+                    last_heartbeat = now
                     converted_data = self.__uplink_converter.convert(
                         {'deviceName': self.__device_name, 'deviceType': self.__device_type},
                         {'attributes': {self.__wan_attribute_key: friendly}}) if self.__uplink_converter else None
                     if converted_data and converted_data.attributes_datapoints_count > 0:
                         self.__gateway.send_to_storage(self.get_name(), self.get_id(), converted_data)
-                        self.__log.info('[%s] Active WAN interface changed to "%s" (%s)',
-                                         self.name, friendly, interface)
+                        if changed:
+                            self.__log.info('[%s] Active WAN interface changed to "%s" (%s)',
+                                             self.name, friendly, interface)
+                        else:
+                            self.__log.debug('[%s] WAN interface heartbeat resend: "%s" (%s)',
+                                              self.name, friendly, interface)
             except Exception as e:
                 self.__log.exception('[%s] Error while checking WAN status: %s', self.name, e)
             self.__stopped.wait(self.__wan_poll_interval_sec)

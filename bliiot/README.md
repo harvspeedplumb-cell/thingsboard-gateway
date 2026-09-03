@@ -220,7 +220,13 @@ does.
 Telemetry keys are simply the channel names (`DI1`..`DI8`, `DO1`..`DO4`) as booleans,
 published on change plus a full-state resend every `gpio.heartbeatIntervalSec` (default
 60s). The active WAN path is published as the `active_wan_interface` device attribute
-(`"ethernet"`/`"cellular"`), updated only on change.
+(`"ethernet"`/`"cellular"`), published on change **and** re-published unconditionally every
+`gpio.heartbeatIntervalSec`, same as DI/DO. That heartbeat resend was added after a live
+finding on Kelvin26001 (2026-09-03): the attribute used to be published on-change only, so
+if the platform ever lost it independently of the interface actually changing (e.g. the
+gateway device being deleted and recreated on the platform), it would stay blank/stale
+until the connector process was restarted. The heartbeat resend bounds that to one
+heartbeat interval, with no restart needed.
 
 ## Boot-time safety net
 
