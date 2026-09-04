@@ -8,6 +8,12 @@
   "// 7": "instance/ONE gpiod line request rather than two independent connector processes",
   "// 8": "(GPIO chardev lines are exclusively locked; two processes requesting the same",
   "// 9": "offset would collide with 'Device or resource busy').",
+  "// 10": "Also demonstrates 'destination is list membership' (2026-09-04): DI8 is listed in",
+  "// 11": "BOTH 'timeseries' and 'attributes' below, so it publishes both ways; wanStatus is",
+  "// 12": "listed in both lists too (the 'attributes' copy's fields win on any conflict); and",
+  "// 13": "wanTraffic is listed in 'attributes' only here (rather than 'timeseries', as in the",
+  "// 14": "default bliiot_gpio.json) just to show it works there too -- pick whichever",
+  "// 15": "destination(s) suit your dashboard/rule-chain setup.",
   "name": "BLIIOT X26 GPIO Connector",
   "logLevel": "INFO",
   "gpio": {
@@ -27,7 +33,8 @@
     {"key": "DI5", "activeLow": true, "bias": "as-is", "debounceMs": 50},
     {"key": "DI6", "activeLow": true, "bias": "as-is", "debounceMs": 50},
     {"key": "DI7", "activeLow": true, "bias": "as-is", "debounceMs": 50},
-    {"key": "DI8", "activeLow": true, "bias": "as-is", "debounceMs": 50}
+    {"key": "DI8", "activeLow": true, "bias": "as-is", "debounceMs": 50},
+    {"source": "wanStatus", "key": "active_wan_interface"}
   ],
   "serverSideRpc": [
     {"key": "DO1", "activeLow": true},
@@ -40,6 +47,18 @@
       "source": "wanStatus",
       "key": "active_wan_interface",
       "pollPeriod": 15,
+      "interfaceNames": {
+        "eth0": "ethernet",
+        "usb0": "cellular"
+      }
+    },
+    {"key": "DI8", "activeLow": true, "bias": "as-is", "debounceMs": 50},
+    {
+      "source": "wanTraffic",
+      "pollIntervalSec": 60,
+      "resetHour": 0,
+      "rxKeySuffix": "_rx_bytes",
+      "txKeySuffix": "_tx_bytes",
       "interfaceNames": {
         "eth0": "ethernet",
         "usb0": "cellular"

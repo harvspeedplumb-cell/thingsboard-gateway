@@ -19,8 +19,9 @@ for the confirmed hardware facts this connector relies on (chip index instabilit
 reflashes, DI/DO polarity inversion, DO "sticky output" behaviour).
 
 Also reports which WAN path (Ethernet vs the onboard 4G modem) currently holds the
-default route as a device attribute, since the box is deployed with Ethernet-primary /
-cellular-backup failover and that should be visible from ThingsBoard, not just by SSHing
+default route as a device attribute and/or timeseries point, and (optionally) each WAN
+interface's daily traffic volume, since the box is deployed with Ethernet-primary /
+cellular-backup failover and both should be visible from ThingsBoard, not just by SSHing
 into the box.
 
 CONFIG FORMAT (2026-09-04 rewrite -- BREAKING CHANGE, no backward-compat aliases, by
@@ -63,6 +64,39 @@ bespoke dict-of-channels shape this connector used before:
     migration log). BACnet/Modbus don't have this constraint since they're bus/network
     protocols, not an exclusively-lockable local character device.
 
+DESTINATION IS LIST MEMBERSHIP (2026-09-04, second rewrite pass): exactly like BACnet, where
+the SAME point shape can be placed in either "timeseries" or "attributes" (or both) to decide
+whether it becomes ThingsBoard telemetry or a device attribute, a DI channel's entry and the
+"source": "wanStatus" entry can each be placed in "timeseries", "attributes", or both:
+  - A DI channel entry (matched by "key") appearing in "timeseries" publishes that channel as
+    telemetry; appearing in "attributes" (as a plain {"key": ..., ...} entry, no "source" field)
+    publishes it as a device attribute instead. Appearing in both publishes it both ways. A
+    standard board channel (DI1..DI8 on X26) not mentioned in EITHER list still defaults to
+    timeseries-only, exactly as before this change -- existing configs are unaffected. Once a
+    key is mentioned in either list, that mention (not the board default) decides its
+    destination(s), which is what makes "attribute only, no telemetry" possible for a channel
+    that would otherwise default to timeseries.
+  - The "source": "wanStatus" entry works the same way: put it in "attributes" (as before) for
+    an attribute, "timeseries" for telemetry, or list it (with the same field values) in both
+    for both. If both lists happen to carry their own copy with different field values, the
+    "attributes" list's copy is authoritative for the actual field values (key/pollPeriod/
+    interfaceNames) -- the "timeseries" list's copy only signals "also publish this as
+    telemetry".
+  - NEW "source": "wanTraffic" entry (same either-list-or-both placement): reports each
+    configured WAN interface's DAILY byte-volume totals (separate rx/tx keys per interface,
+    named "<friendly interface name><rxKeySuffix|txKeySuffix>", e.g. "ethernet_rx_bytes") by
+    sampling /sys/class/net/<iface>/statistics/{rx,tx}_bytes on "pollIntervalSec" and
+    publishing the accumulated delta once every "resetHour" (UTC) rollover. Defaults to
+    telemetry if placed in "timeseries" (the natural home for a daily volume trend) but can be
+    an attribute instead/also, same as everything else here. KNOWN LIMITATION, documented
+    rather than silently swallowed: the daily accumulator is in-memory only, not persisted
+    across a connector/gateway restart -- a restart mid-day starts a fresh (shorter) day
+    rather than resuming the interrupted one, and a detected counter reset (interface
+    down/up, reboot) is re-baselined rather than carried forward, so that one day's total for
+    the affected interface will undercount. An interface that doesn't currently exist (e.g. no
+    4G modem installed, or not yet registered on the network) is skipped for that reading, not
+    treated as an error -- same "don't crash on a missing interface" philosophy as WAN status.
+
 This is the built-in "connectors/" variant: installed as part of the thingsboard_gateway
 Python package itself (thingsboard_gateway/connectors/bliiot_gpio/), so gpio_map.py (this
 variant's name for the sibling hardware-mapping helper module -- called bliiot_gpio_map.py
@@ -72,9 +106,10 @@ extensions/ variant -- see that copy's module docstring for the sys.path-shim ra
 that applies there instead.
 """
 
+import os
 import select
 import subprocess
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from random import choice
 from string import ascii_lowercase
 from threading import Event, Lock, Thread
@@ -115,6 +150,10 @@ _BIAS_MAP = {
 }
 
 _DO_ACTIONS = ('set', 'get', 'toggle')
+
+# Overridable (by tests) rather than hardcoded inline, so offline verification can point
+# this at a fake sysfs-like directory instead of the real /sys/class/net.
+NET_STATS_DIR = '/sys/class/net'
 
 
 class BliiotGpioConnector(Connector, Thread):
@@ -171,7 +210,8 @@ class BliiotGpioConnector(Connector, Thread):
 
         # Confirmed on real hardware 2026-09-03 (see gpio_map.py's module docstring): DI is
         # inverted the same way DO is, so this default is True, not False.
-        self.__di_config = self.__build_timeseries_config(config.get('timeseries'), default_di_offsets)
+        self.__di_config = self.__build_di_config(config.get('timeseries'), config.get('attributes'),
+                                                    default_di_offsets)
         self.__do_config = self.__build_server_side_rpc_config(config.get('serverSideRpc'), default_do_offsets)
         validate_offsets({key: cfg['offset'] for key, cfg in self.__di_config.items()},
                           {key: cfg['offset'] for key, cfg in self.__do_config.items()})
@@ -179,8 +219,12 @@ class BliiotGpioConnector(Connector, Thread):
         self.__di_offset_to_key = {cfg['offset']: key for key, cfg in self.__di_config.items()}
         self.__method_to_channel = self.__build_method_map()
 
-        self.__wan_attr = self.__build_wan_attribute_config(config.get('attributes'))
+        self.__wan_attr = self.__build_wan_attribute_config(config.get('timeseries'), config.get('attributes'))
         self.__last_wan_value = None
+
+        self.__wan_traffic = self.__build_wan_traffic_config(config.get('timeseries'), config.get('attributes'))
+        self.__wan_traffic_lock = Lock()
+        self.__wan_traffic_baseline = {}  # {iface: {'rx': int, 'tx': int}} -- current day's starting point
 
         self.__devices = self.__build_devices_config(config.get('devices'))
         # Kept for logging/backward-reference convenience -- the first/primary device.
@@ -214,6 +258,7 @@ class BliiotGpioConnector(Connector, Thread):
         self.__poll_thread = None
         self.__di_event_thread = None
         self.__wan_thread = None
+        self.__wan_traffic_thread = None
 
     # ------------------------------------------------------------------ lifecycle ----
 
@@ -249,6 +294,11 @@ class BliiotGpioConnector(Connector, Thread):
         if self.__wan_attr is not None:
             self.__wan_thread = Thread(target=self.__wan_loop, name=f'{self.name} WAN Status', daemon=True)
             self.__wan_thread.start()
+
+        if self.__wan_traffic is not None:
+            self.__wan_traffic_thread = Thread(target=self.__wan_traffic_loop, name=f'{self.name} WAN Traffic',
+                                                daemon=True)
+            self.__wan_traffic_thread.start()
 
         while not self.__stopped.is_set():
             sleep(0.5)
@@ -286,39 +336,82 @@ class BliiotGpioConnector(Connector, Thread):
 
     # ------------------------------------------------------------------- gpio init ---
 
-    def __build_timeseries_config(self, entries, defaults):
-        """Parse the top-level "timeseries" list (DI channels) into {key: {offset,
-        activeLow, bias, debounceMs}}. Any of the selected board's standard channel
-        keys (DI1, DI2, ...) may be omitted from "timeseries" entirely and still gets
-        its board-default offset; only a genuinely custom key needs an explicit "offset"."""
-        entries = entries or []
-        by_key = {}
-        for entry in entries:
+    def __build_di_config(self, timeseries_entries, attributes_entries, defaults):
+        """Parse DI channel definitions out of BOTH the top-level "timeseries" list and
+        the top-level "attributes" list (any entry there with no "source" field is
+        treated as a DI channel, not the special wanStatus/wanTraffic entries). Which
+        list(s) a channel's key appears in decides its publish destination(s) -- exactly
+        like BACnet, where placing the same point shape in "timeseries" vs "attributes"
+        decides whether it becomes telemetry or a device attribute. A standard board
+        channel (e.g. DI1 on X26) mentioned in NEITHER list still defaults to
+        timeseries-only, unchanged from this connector's original behaviour; once it's
+        mentioned in either list, that mention (not the board default) decides its
+        destination(s) -- e.g. listing DI1 only in "attributes" makes it attribute-only,
+        no telemetry at all. Returns {key: {offset, activeLow, bias, debounceMs,
+        publish}}, where "publish" is a frozenset subset of {"timeseries", "attribute"}.
+        """
+        ts_by_key = {}
+        for entry in (timeseries_entries or []):
+            if entry.get('source'):
+                continue  # the special "wanStatus"/"wanTraffic" entries, not a DI channel
             key = entry.get('key')
             if not key:
                 self.__log.error('[%s] "timeseries" entry with no "key", skipping: %s', self.name, entry)
                 continue
-            by_key[key] = entry
+            ts_by_key[key] = entry
 
-        result = {}
-        for key, default_offset in defaults.items():
-            overrides = by_key.pop(key, {})
-            result[key] = {
-                'offset': overrides.get('offset', default_offset),
-                'activeLow': overrides.get('activeLow', True),
-                'bias': overrides.get('bias', 'as-is'),
-                'debounceMs': overrides.get('debounceMs', 50),
-            }
-        for key, entry in by_key.items():
-            if 'offset' not in entry:
-                self.__log.error('[%s] "timeseries" entry "%s" has no "offset" configured, skipping',
-                                  self.name, key)
+        attr_by_key = {}
+        for entry in (attributes_entries or []):
+            if entry.get('source'):
+                continue  # the special "wanStatus"/"wanTraffic" entries, not a DI channel
+            key = entry.get('key')
+            if not key:
+                self.__log.error('[%s] "attributes" entry with no "key" (and no "source"), skipping: %s',
+                                  self.name, entry)
                 continue
+            attr_by_key[key] = entry
+
+        all_keys = set(defaults) | set(ts_by_key) | set(attr_by_key)
+        result = {}
+        for key in all_keys:
+            ts_entry = ts_by_key.get(key)
+            attr_entry = attr_by_key.get(key)
+
+            publish = set()
+            if ts_entry is not None:
+                publish.add('timeseries')
+            if attr_entry is not None:
+                publish.add('attribute')
+            if not publish:
+                if key not in defaults:
+                    continue  # unreachable: a non-default key only ever enters all_keys via one of the two dicts
+                publish.add('timeseries')  # untouched standard channel -- previous-equivalent default behaviour
+
+            ts_offset = ts_entry.get('offset') if ts_entry else None
+            attr_offset = attr_entry.get('offset') if attr_entry else None
+            if ts_offset is not None and attr_offset is not None and ts_offset != attr_offset:
+                raise ValueError(f'Channel "{key}" is configured with conflicting "offset" values in '
+                                  f'"timeseries" ({ts_offset}) and "attributes" ({attr_offset}) -- both entries '
+                                  f'describe the same physical channel, so they must agree (or only specify the '
+                                  f'offset on one of them).')
+            offset = ts_offset if ts_offset is not None else (attr_offset if attr_offset is not None
+                                                                else defaults.get(key))
+            if offset is None:
+                self.__log.error('[%s] Channel "%s" has no "offset" configured (in "timeseries" or '
+                                  '"attributes"), skipping', self.name, key)
+                continue
+
+            # timeseries entry's fields win over attributes entry's on a conflict (documented, not silent) --
+            # both describing the exact same physical line, this only matters if someone genuinely sets
+            # different activeLow/bias/debounceMs per list, which is almost certainly a config mistake.
+            primary = ts_entry or attr_entry or {}
+            fallback = attr_entry or {}
             result[key] = {
-                'offset': entry['offset'],
-                'activeLow': entry.get('activeLow', True),
-                'bias': entry.get('bias', 'as-is'),
-                'debounceMs': entry.get('debounceMs', 50),
+                'offset': offset,
+                'activeLow': primary.get('activeLow', fallback.get('activeLow', True)),
+                'bias': primary.get('bias', fallback.get('bias', 'as-is')),
+                'debounceMs': primary.get('debounceMs', fallback.get('debounceMs', 50)),
+                'publish': frozenset(publish),
             }
         return result
 
@@ -376,20 +469,69 @@ class BliiotGpioConnector(Connector, Thread):
                 method_map[method] = (action, key)
         return method_map
 
-    def __build_wan_attribute_config(self, entries):
-        """Parse the top-level "attributes" list for the (at most one) entry with
-        "source": "wanStatus". Returns None if WAN-status reporting isn't configured at
-        all (no such entry) -- this is what enables/disables the feature now, there is
-        no separate "enabled" flag."""
+    @staticmethod
+    def __find_source_entry(entries, source):
         for entry in (entries or []):
-            if entry.get('source') != 'wanStatus':
-                continue
-            return {
-                'key': entry.get('key', 'active_wan_interface'),
-                'pollPeriod': entry.get('pollPeriod', 15),
-                'interfaceNames': entry.get('interfaceNames', {'eth0': 'ethernet', 'usb0': 'cellular'}),
-            }
+            if entry.get('source') == source:
+                return entry
         return None
+
+    def __build_wan_attribute_config(self, timeseries_entries, attributes_entries):
+        """Parse the (at most one, per list) "source": "wanStatus" entry out of the
+        top-level "timeseries" and/or "attributes" lists. Returns None if neither list
+        has one -- that absence is what enables/disables the feature, there is no
+        separate "enabled" flag. Which list(s) carry the entry decide its publish
+        "destinations" (a frozenset subset of {"timeseries", "attribute"}) -- the same
+        either-list-or-both mechanism as a DI channel. If both lists happen to have their
+        own copy with different key/pollPeriod/interfaceNames values, the "attributes"
+        list's copy is authoritative for those; the "timeseries" list's copy only adds
+        "timeseries" to the destination set."""
+        ts_entry = self.__find_source_entry(timeseries_entries, 'wanStatus')
+        attr_entry = self.__find_source_entry(attributes_entries, 'wanStatus')
+        if ts_entry is None and attr_entry is None:
+            return None
+
+        destinations = set()
+        if ts_entry is not None:
+            destinations.add('timeseries')
+        if attr_entry is not None:
+            destinations.add('attribute')
+
+        source = attr_entry or ts_entry
+        return {
+            'key': source.get('key', 'active_wan_interface'),
+            'pollPeriod': source.get('pollPeriod', 15),
+            'interfaceNames': source.get('interfaceNames', {'eth0': 'ethernet', 'usb0': 'cellular'}),
+            'destinations': frozenset(destinations),
+        }
+
+    def __build_wan_traffic_config(self, timeseries_entries, attributes_entries):
+        """Parse the (at most one, per list) "source": "wanTraffic" entry -- same
+        either-list-or-both destination mechanism as wanStatus above. Reports each
+        configured interface's DAILY byte-volume totals as separate rx/tx keys, named
+        "<friendly interface name><rxKeySuffix|txKeySuffix>" (e.g. "ethernet_rx_bytes"),
+        sampled from /sys/class/net/<iface>/statistics/{rx,tx}_bytes."""
+        ts_entry = self.__find_source_entry(timeseries_entries, 'wanTraffic')
+        attr_entry = self.__find_source_entry(attributes_entries, 'wanTraffic')
+        if ts_entry is None and attr_entry is None:
+            return None
+
+        destinations = set()
+        if ts_entry is not None:
+            destinations.add('timeseries')
+        if attr_entry is not None:
+            destinations.add('attribute')
+
+        source = attr_entry or ts_entry
+        interface_names = source.get('interfaceNames', {'eth0': 'ethernet', 'usb0': 'cellular'})
+        return {
+            'interfaceNames': interface_names,
+            'pollIntervalSec': source.get('pollIntervalSec', 60),
+            'resetHour': source.get('resetHour', 0),
+            'rxKeySuffix': source.get('rxKeySuffix', '_rx_bytes'),
+            'txKeySuffix': source.get('txKeySuffix', '_tx_bytes'),
+            'destinations': frozenset(destinations),
+        }
 
     def __build_devices_config(self, entries):
         """Parse the "devices" list. Each device may be given its own "timeseries"/
@@ -404,9 +546,24 @@ class BliiotGpioConnector(Connector, Thread):
         entries = entries or [{}]
         if not entries:
             entries = [{}]
-        all_ts_keys = set(self.__di_config) | set(self.__do_config)
-        all_attr_keys = {self.__wan_attr['key']} if self.__wan_attr else set()
-        all_rpc_keys = set(self.__do_config)
+
+        all_ts_keys = {key for key, cfg in self.__di_config.items() if 'timeseries' in cfg['publish']}
+        all_ts_keys |= set(self.__do_config)
+        all_attr_keys = {key for key, cfg in self.__di_config.items() if 'attribute' in cfg['publish']}
+        if self.__wan_attr is not None:
+            if 'attribute' in self.__wan_attr['destinations']:
+                all_attr_keys.add(self.__wan_attr['key'])
+            if 'timeseries' in self.__wan_attr['destinations']:
+                all_ts_keys.add(self.__wan_attr['key'])
+        if self.__wan_traffic is not None:
+            traffic_keys = set()
+            for friendly in self.__wan_traffic['interfaceNames'].values():
+                traffic_keys.add(f"{friendly}{self.__wan_traffic['rxKeySuffix']}")
+                traffic_keys.add(f"{friendly}{self.__wan_traffic['txKeySuffix']}")
+            if 'attribute' in self.__wan_traffic['destinations']:
+                all_attr_keys |= traffic_keys
+            if 'timeseries' in self.__wan_traffic['destinations']:
+                all_ts_keys |= traffic_keys
 
         devices = []
         seen_names = set()
@@ -429,7 +586,7 @@ class BliiotGpioConnector(Connector, Thread):
             if unknown_attr:
                 self.__log.warning('[%s] Device "%s" lists unknown "attributes" key(s) %s', self.name, name,
                                     sorted(unknown_attr))
-            unknown_rpc = set(rpc_subset or []) - all_rpc_keys
+            unknown_rpc = set(rpc_subset or []) - set(self.__do_config)
             if unknown_rpc:
                 self.__log.warning('[%s] Device "%s" lists unknown "serverSideRpc" key(s) %s', self.name, name,
                                     sorted(unknown_rpc))
@@ -502,13 +659,33 @@ class BliiotGpioConnector(Connector, Thread):
                 changes[key] = state
         return changes
 
+    def __split_di_by_publish(self, di_dict):
+        """Split a {DI key: value} dict into (timeseries_subset, attribute_subset)
+        according to each channel's own "publish" destinations (see __build_di_config).
+        A channel configured for both destinations appears in both returned dicts."""
+        ts_subset = {}
+        attr_subset = {}
+        for key, value in di_dict.items():
+            cfg = self.__di_config.get(key)
+            if cfg is None:
+                continue
+            if 'timeseries' in cfg['publish']:
+                ts_subset[key] = value
+            if 'attribute' in cfg['publish']:
+                attr_subset[key] = value
+        return ts_subset, attr_subset
+
     def __poll_loop(self):
         last_publish = monotonic()
         while not self.__stopped.is_set():
             try:
                 changes = self.__poll_di_once()
                 if self.__report_on_change and changes:
-                    self.__fan_out_telemetry(changes)
+                    ts_changes, attr_changes = self.__split_di_by_publish(changes)
+                    if ts_changes:
+                        self.__fan_out_telemetry(ts_changes)
+                    if attr_changes:
+                        self.__fan_out_attribute(attr_changes)
                 now = monotonic()
                 if now - last_publish >= self.__poll_period_sec:
                     self.__publish_full_state()
@@ -548,7 +725,11 @@ class BliiotGpioConnector(Connector, Thread):
                         self.__di_state[key] = state
                         changes[key] = state
                 if changes and self.__report_on_change:
-                    self.__fan_out_telemetry(changes)
+                    ts_changes, attr_changes = self.__split_di_by_publish(changes)
+                    if ts_changes:
+                        self.__fan_out_telemetry(ts_changes)
+                    if attr_changes:
+                        self.__fan_out_attribute(attr_changes)
             except Exception as e:
                 self.__log.exception('[%s] Error in DI edge-event loop (experimental -- set gpio.eventDriven=false '
                                       'to fall back to the validated polling path): %s', self.name, e)
@@ -608,27 +789,36 @@ class BliiotGpioConnector(Connector, Thread):
                 self.__gateway.send_to_storage(self.get_name(), self.get_id(), converted_data)
                 self.statistics['MessagesSent'] += 1
 
-    def __publish_full_state(self):
-        snapshot = dict(self.__di_state)
-        with self.__do_lock:
-            snapshot.update(self.__do_state)
-        self.__fan_out_telemetry(snapshot)
-
-    # ------------------------------------------------------------------ WAN status ---
-
-    def __fan_out_wan_attribute(self, value):
-        if self.__uplink_converter is None or self.__wan_attr is None:
+    def __fan_out_attribute(self, attributes):
+        """Publish `attributes` ({key: value}) to every device whose "attributes"
+        subset includes each key (or has no subset restriction) -- generalised from what
+        used to be a WAN-status-only helper, now shared by WAN status, WAN traffic, and
+        any DI channel configured for attribute publishing."""
+        if not attributes or self.__uplink_converter is None:
             return
-        key = self.__wan_attr['key']
         for device in self.__devices:
             subset = device['attributes']
-            if subset is not None and key not in subset:
+            entry = attributes if subset is None else {k: v for k, v in attributes.items() if k in subset}
+            if not entry:
                 continue
             converted_data = self.__uplink_converter.convert(
                 {'deviceName': device['name'], 'deviceType': device['type']},
-                {'attributes': {key: value}})
+                {'attributes': entry})
             if converted_data and converted_data.attributes_datapoints_count > 0:
                 self.__gateway.send_to_storage(self.get_name(), self.get_id(), converted_data)
+
+    def __publish_full_state(self):
+        with self.__do_lock:
+            do_snapshot = dict(self.__do_state)
+        di_snapshot = dict(self.__di_state)
+        di_ts, di_attr = self.__split_di_by_publish(di_snapshot)
+        ts_snapshot = {**do_snapshot, **di_ts}
+        if ts_snapshot:
+            self.__fan_out_telemetry(ts_snapshot)
+        if di_attr:
+            self.__fan_out_attribute(di_attr)
+
+    # ------------------------------------------------------------------ WAN status ---
 
     def __wan_loop(self):
         # NOTE: this attribute is pushed to the platform only when we (re)send it here --
@@ -645,11 +835,15 @@ class BliiotGpioConnector(Connector, Thread):
         # Fixed by also forcing an unconditional resend every this attribute's own
         # "pollPeriod", independent of whether the value changed, so the platform is
         # guaranteed to catch up within one interval even if it lost the attribute for a
-        # reason this connector can't detect.
+        # reason this connector can't detect. Applies to whichever destination(s) this
+        # entry is configured for (attribute and/or timeseries -- see __build_wan_attribute_config).
         wan_poll_period_sec = self.__wan_attr['pollPeriod']
         interface_names = self.__wan_attr['interfaceNames']
+        key = self.__wan_attr['key']
+        destinations = self.__wan_attr['destinations']
         last_heartbeat = monotonic()
-        self.__log.debug('[%s] WAN status loop starting: pollPeriod=%s', self.name, wan_poll_period_sec)
+        self.__log.debug('[%s] WAN status loop starting: pollPeriod=%s destinations=%s', self.name,
+                          wan_poll_period_sec, sorted(destinations))
         while not self.__stopped.is_set():
             try:
                 interface = self.__detect_default_route_interface()
@@ -663,7 +857,10 @@ class BliiotGpioConnector(Connector, Thread):
                 if changed or due_for_heartbeat:
                     self.__last_wan_value = friendly
                     last_heartbeat = now
-                    self.__fan_out_wan_attribute(friendly)
+                    if 'attribute' in destinations:
+                        self.__fan_out_attribute({key: friendly})
+                    if 'timeseries' in destinations:
+                        self.__fan_out_telemetry({key: friendly})
                     if changed:
                         self.__log.info('[%s] Active WAN interface changed to "%s" (%s)',
                                          self.name, friendly, interface)
@@ -692,6 +889,106 @@ class BliiotGpioConnector(Connector, Thread):
             return first_line[first_line.index('dev') + 1]
         except (ValueError, IndexError):
             return None
+
+    # ----------------------------------------------------------------- WAN traffic ---
+
+    @staticmethod
+    def __read_interface_counters(iface):
+        """Read {rx, tx} cumulative byte counters for `iface` from NET_STATS_DIR (real
+        default: /sys/class/net). Returns None -- not an error -- if the interface
+        doesn't currently exist (e.g. no 4G modem installed/registered, or a stats file
+        that can't be parsed), same "don't crash on a missing interface" philosophy as
+        WAN status's own "unknown" handling."""
+        base = os.path.join(NET_STATS_DIR, iface, 'statistics')
+        try:
+            with open(os.path.join(base, 'rx_bytes')) as f:
+                rx = int(f.read().strip())
+            with open(os.path.join(base, 'tx_bytes')) as f:
+                tx = int(f.read().strip())
+        except (OSError, ValueError):
+            return None
+        return {'rx': rx, 'tx': tx}
+
+    @staticmethod
+    def __traffic_day_for(dt_utc, reset_hour):
+        """The "accumulation day" identifier for `dt_utc`, rolling over at
+        `reset_hour`:00 UTC each day rather than always at UTC midnight."""
+        return (dt_utc - timedelta(hours=reset_hour)).date()
+
+    @staticmethod
+    def __compute_traffic_totals(baseline, current, interface_names, rx_suffix, tx_suffix):
+        """Given {iface: {rx,tx}} baseline/current readings, return {telemetry_key:
+        bytes} totals for the elapsed period. A detected counter reset (current < the
+        baseline reading -- an interface flap or a reboot) is clamped to 0 rather than
+        producing a bogus negative number; an interface missing from either dict (not
+        currently present, e.g. no 4G modem installed) is skipped entirely, not an error."""
+        totals = {}
+        for iface, friendly in interface_names.items():
+            cur = current.get(iface)
+            base = baseline.get(iface)
+            if cur is None or base is None:
+                continue
+            totals[f'{friendly}{rx_suffix}'] = max(cur['rx'] - base['rx'], 0)
+            totals[f'{friendly}{tx_suffix}'] = max(cur['tx'] - base['tx'], 0)
+        return totals
+
+    def __read_all_traffic_counters(self):
+        return {iface: self.__read_interface_counters(iface)
+                for iface in self.__wan_traffic['interfaceNames']}
+
+    def __wan_traffic_loop(self):
+        # KNOWN LIMITATION (documented in the module docstring too, not just here): the
+        # daily accumulator below is in-memory only. A connector/gateway restart mid-day
+        # starts a fresh, shorter day rather than resuming the interrupted one, and a
+        # detected counter reset is re-baselined (that day's total for the affected
+        # interface undercounts) rather than carried forward. Acceptable for a "roughly
+        # how much data did each WAN path use today" trend, not a billing-grade meter.
+        cfg = self.__wan_traffic
+        reset_hour = cfg['resetHour']
+        poll_sec = cfg['pollIntervalSec']
+
+        with self.__wan_traffic_lock:
+            self.__wan_traffic_baseline = self.__read_all_traffic_counters()
+        current_day = self.__traffic_day_for(datetime.now(timezone.utc), reset_hour)
+        self.__log.debug('[%s] WAN traffic loop starting: pollIntervalSec=%s resetHour=%s interfaces=%s',
+                          self.name, poll_sec, reset_hour, list(cfg['interfaceNames']))
+
+        while not self.__stopped.is_set():
+            try:
+                now = datetime.now(timezone.utc)
+                day = self.__traffic_day_for(now, reset_hour)
+                current_counters = self.__read_all_traffic_counters()
+
+                if day != current_day:
+                    with self.__wan_traffic_lock:
+                        baseline = self.__wan_traffic_baseline
+                        totals = self.__compute_traffic_totals(baseline, current_counters, cfg['interfaceNames'],
+                                                                 cfg['rxKeySuffix'], cfg['txKeySuffix'])
+                        self.__wan_traffic_baseline = current_counters
+                    current_day = day
+                    if totals:
+                        if 'timeseries' in cfg['destinations']:
+                            self.__fan_out_telemetry(totals)
+                        if 'attribute' in cfg['destinations']:
+                            self.__fan_out_attribute(totals)
+                        self.__log.info('[%s] Published daily WAN traffic totals: %s', self.name, totals)
+                else:
+                    # Mid-day: re-baseline early on a detected counter reset (interface
+                    # down/up, reboot) so the eventual rollover doesn't just report 0 for
+                    # the whole day -- __compute_traffic_totals's own clamping is a
+                    # backstop for this, not a substitute for catching it promptly.
+                    with self.__wan_traffic_lock:
+                        for iface, counters in current_counters.items():
+                            prev = self.__wan_traffic_baseline.get(iface)
+                            if counters is not None and prev is not None and (
+                                    counters['rx'] < prev['rx'] or counters['tx'] < prev['tx']):
+                                self.__log.warning('[%s] WAN traffic counter reset detected on %s (interface '
+                                                    'down/up or reboot) -- rebaselining, today\'s total for this '
+                                                    'interface will undercount', self.name, iface)
+                                self.__wan_traffic_baseline[iface] = counters
+            except Exception as e:
+                self.__log.exception('[%s] Error in WAN traffic loop: %s', self.name, e)
+            self.__stopped.wait(poll_sec)
 
     # --------------------------------------------------------------- ThingsBoard IO --
 
@@ -756,8 +1053,6 @@ class BliiotGpioConnector(Connector, Thread):
             if method == 'getDi':
                 channel = params.get('channel')
                 allowed = device['timeseries']
-                with self.__do_lock:
-                    pass  # no DO lock needed for DI, just keeping the block shape consistent
                 if channel:
                     visible = allowed is None or channel in allowed
                     self.__reply(device_name, req_id, {'success': visible and channel in self.__di_state,
@@ -779,6 +1074,23 @@ class BliiotGpioConnector(Connector, Thread):
                                                          'error': f'Device "{device_name}" is not configured for "{key}"'})
                     return
                 self.__reply(device_name, req_id, {'success': True, key: self.__last_wan_value})
+                return
+
+            if method == 'getWanTraffic':
+                if self.__wan_traffic is None:
+                    self.__reply(device_name, req_id, {'success': False,
+                                                         'error': 'WAN traffic reporting is not configured'})
+                    return
+                cfg = self.__wan_traffic
+                with self.__wan_traffic_lock:
+                    baseline = dict(self.__wan_traffic_baseline)
+                current = self.__read_all_traffic_counters()
+                totals = self.__compute_traffic_totals(baseline, current, cfg['interfaceNames'],
+                                                         cfg['rxKeySuffix'], cfg['txKeySuffix'])
+                allowed = device['attributes']
+                if allowed is not None:
+                    totals = {k: v for k, v in totals.items() if k in allowed}
+                self.__reply(device_name, req_id, {'success': True, 'sinceReset': totals})
                 return
 
             channel_mapping = self.__method_to_channel.get(method)

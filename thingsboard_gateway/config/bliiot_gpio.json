@@ -1,4 +1,11 @@
 {
+  "//": "DI channels, and the 'wanStatus'/'wanTraffic' entries below, can each be placed in",
+  "// 2": "'timeseries', 'attributes', or both -- list membership decides whether that value",
+  "// 3": "becomes ThingsBoard telemetry, a device attribute, or both (see the connector's",
+  "// 4": "module docstring, 'DESTINATION IS LIST MEMBERSHIP'). This file's layout below",
+  "// 5": "(DI as timeseries, wanStatus as attribute, wanTraffic as timeseries) matches what",
+  "// 6": "Kelvin26001 already runs -- moving a channel to 'attributes' as well (or instead) is",
+  "// 7": "optional and can be done per-box without touching the connector code.",
   "name": "BLIIOT X26 GPIO Connector",
   "logLevel": "INFO",
   "gpio": {
@@ -18,7 +25,19 @@
     {"key": "DI5", "activeLow": true, "bias": "as-is", "debounceMs": 50},
     {"key": "DI6", "activeLow": true, "bias": "as-is", "debounceMs": 50},
     {"key": "DI7", "activeLow": true, "bias": "as-is", "debounceMs": 50},
-    {"key": "DI8", "activeLow": true, "bias": "as-is", "debounceMs": 50}
+    {"key": "DI8", "activeLow": true, "bias": "as-is", "debounceMs": 50},
+    {
+      "source": "wanTraffic",
+      "//": "Daily Ethernet/cellular byte-volume totals, published once per 'resetHour' UTC rollover -- see the connector's module docstring for the in-memory-only/not-persisted-across-restarts limitation.",
+      "pollIntervalSec": 60,
+      "resetHour": 0,
+      "rxKeySuffix": "_rx_bytes",
+      "txKeySuffix": "_tx_bytes",
+      "interfaceNames": {
+        "eth0": "ethernet",
+        "usb0": "cellular"
+      }
+    }
   ],
   "serverSideRpc": [
     {"key": "DO1", "activeLow": true},

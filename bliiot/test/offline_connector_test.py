@@ -41,6 +41,29 @@ Covers, in order:
      the assumed "usb0") still gets reported using its raw interface name rather than
      silently falling back to "unknown" or crashing the WAN status loop/thread.
 
+  2026-09-04 second rewrite pass -- "destination is list membership" for DI/wanStatus, and
+  the new daily wanTraffic feature:
+  13. DI channel destination flexibility: a key in "attributes" only publishes attribute-
+     only, "timeseries" only publishes timeseries-only, both publishes both, and a
+     standard board key mentioned in neither list still defaults to timeseries-only
+     (regression check). Confirms the "source"-tagged wanStatus entry placed in
+     "timeseries" doesn't leak into di_config as a fake DI channel. __split_di_by_publish
+     unit-tested directly. Conflicting explicit "offset" values across the two lists for
+     the same key raises ValueError at startup.
+  14. wanStatus destination flexibility: "timeseries" only, both lists (with the
+     "attributes" list's copy authoritative for field values), and that each destination
+     actually reaches the right storage (attributes vs telemetry).
+  15. wanTraffic config parsing from either/both lists, defaults, and that it doesn't leak
+     into di_config either.
+  16. wanTraffic's pure helper functions against a fake NET_STATS_DIR (not the real
+     /sys/class/net): __read_interface_counters, __read_all_traffic_counters,
+     __compute_traffic_totals (including the no-4G-modem missing-interface case and a
+     detected counter reset clamped to 0), __traffic_day_for at a non-zero resetHour.
+  17. getWanTraffic RPC: not-configured case, and device "attributes"-subset filtering of
+     the returned "sinceReset" totals.
+  18. __wan_traffic_loop: seeds its baseline at startup (tolerating a missing interface),
+     and stops cleanly on connector shutdown.
+
 Run directly, no arguments, no pytest dependency:
 
     python3 bliiot/test/offline_connector_test.py
@@ -364,7 +387,8 @@ check('toggleDO3 -> (toggle, DO3)', method_map.get('toggleDO3') == ('toggle', 'D
 
 wan_attr = mangled(conn1, 'wan_attr')
 check('WAN attribute parsed', wan_attr == {'key': 'active_wan_interface', 'pollPeriod': 3600,
-                                            'interfaceNames': {'eth0': 'ethernet', 'usb0': 'cellular'}},
+                                            'interfaceNames': {'eth0': 'ethernet', 'usb0': 'cellular'},
+                                            'destinations': frozenset({'attribute'})},
       wan_attr)
 
 devices = mangled(conn1, 'devices')
@@ -579,7 +603,7 @@ print('\n--- 10. WAN attribute fan-out ---')
 
 gw7 = FakeGateway()
 conn7 = BliiotGpioConnector(gw7, base_config, 'bliiot_gpio')
-mangled(conn7, 'fan_out_wan_attribute')('ethernet')
+mangled(conn7, 'fan_out_attribute')({'active_wan_interface': 'ethernet'})
 check('Device A (unrestricted attrs) receives WAN attribute',
       storage_for(gw7, 'Device A - Full', kind='attributes').get('active_wan_interface') == 'ethernet')
 check('Device B (attributes subset == empty set) does NOT receive WAN attribute',
@@ -628,7 +652,7 @@ friendly = interface_names7.get(interface, interface) if interface else 'unknown
 check('friendly WAN value falls back to "unknown" (not a crash, not a stale value)', friendly == 'unknown', friendly)
 
 gw7.storage.clear()
-mangled(conn7, 'fan_out_wan_attribute')(friendly)
+mangled(conn7, 'fan_out_attribute')({'active_wan_interface': friendly})
 check('"unknown" WAN status is still published to ThingsBoard (visible, not silently dropped)',
       storage_for(gw7, 'Device A - Full', kind='attributes').get('active_wan_interface') == 'unknown')
 
@@ -676,6 +700,240 @@ check('__wan_loop survives repeated "no default route" ticks without raising (th
       not wan_thread.is_alive())
 check('__wan_loop published "unknown" at least once while no interface held the default route',
       storage_for(gw9, 'Device A - Full', kind='attributes').get('active_wan_interface') == 'unknown')
+
+# =====================================================================================
+print('\n--- 13. DI channel destination flexibility (timeseries / attribute / both) ---')
+# 2026-09-04 second rewrite pass: a DI channel's key can now be placed in "timeseries",
+# "attributes", or both -- list membership decides the publish destination(s), exactly
+# like BACnet. A standard board channel mentioned in NEITHER list must still default to
+# timeseries-only (regression check against the schema shipped earlier the same day).
+
+di_flex_cfg = dict(base_config)
+di_flex_cfg['timeseries'] = [{'key': 'DI2'}, {'key': 'DI3'}]
+di_flex_cfg['attributes'] = [
+    {'source': 'wanStatus', 'key': 'active_wan_interface', 'pollPeriod': 3600},
+    {'key': 'DI1'},
+    {'key': 'DI3'},
+]
+gw13 = FakeGateway()
+conn13 = BliiotGpioConnector(gw13, di_flex_cfg, 'bliiot_gpio')
+di_cfg13 = mangled(conn13, 'di_config')
+
+check('DI1 ("attributes" list only) publishes attribute-only',
+      di_cfg13['DI1']['publish'] == frozenset({'attribute'}), di_cfg13['DI1'])
+check('DI2 ("timeseries" list only, explicit) publishes timeseries-only',
+      di_cfg13['DI2']['publish'] == frozenset({'timeseries'}), di_cfg13['DI2'])
+check('DI3 (both lists) publishes both timeseries and attribute',
+      di_cfg13['DI3']['publish'] == frozenset({'timeseries', 'attribute'}), di_cfg13['DI3'])
+check('DI4 (mentioned in neither list) still defaults to timeseries-only (regression)',
+      di_cfg13['DI4']['publish'] == frozenset({'timeseries'}), di_cfg13['DI4'])
+check('the "source": "wanStatus" entry in "attributes" did not leak into di_config as a fake DI channel',
+      'active_wan_interface' not in di_cfg13, di_cfg13)
+
+ts_subset13, attr_subset13 = mangled(conn13, 'split_di_by_publish')(
+    {'DI1': True, 'DI2': True, 'DI3': True, 'DI4': True})
+check('__split_di_by_publish: DI1 only in the attribute subset',
+      'DI1' not in ts_subset13 and attr_subset13.get('DI1') is True, (ts_subset13, attr_subset13))
+check('__split_di_by_publish: DI2 only in the timeseries subset',
+      ts_subset13.get('DI2') is True and 'DI2' not in attr_subset13, (ts_subset13, attr_subset13))
+check('__split_di_by_publish: DI3 present in both subsets',
+      ts_subset13.get('DI3') is True and attr_subset13.get('DI3') is True, (ts_subset13, attr_subset13))
+check('__split_di_by_publish: DI4 (default) only in the timeseries subset',
+      ts_subset13.get('DI4') is True and 'DI4' not in attr_subset13, (ts_subset13, attr_subset13))
+
+conflict_cfg = dict(base_config)
+conflict_cfg['timeseries'] = [{'key': 'DI5', 'offset': 99}]
+conflict_cfg['attributes'] = [{'key': 'DI5', 'offset': 100}]
+try:
+    BliiotGpioConnector(FakeGateway(), conflict_cfg, 'bliiot_gpio')
+    check('conflicting explicit "offset" across timeseries/attributes for the same key raises ValueError',
+          False, 'no exception raised')
+except ValueError as e:
+    check('conflicting explicit "offset" across timeseries/attributes for the same key raises ValueError',
+          True, str(e))
+
+# =====================================================================================
+print('\n--- 14. wanStatus destination flexibility (timeseries / attribute / both) ---')
+
+wan_ts_only_cfg = dict(base_config)
+wan_ts_only_cfg['attributes'] = []
+wan_ts_only_cfg['timeseries'] = [{'source': 'wanStatus', 'key': 'active_wan_interface', 'pollPeriod': 3600}]
+gw14a = FakeGateway()
+conn14a = BliiotGpioConnector(gw14a, wan_ts_only_cfg, 'bliiot_gpio')
+wan_attr14a = mangled(conn14a, 'wan_attr')
+check('wanStatus in "timeseries" only => destinations == {timeseries}',
+      wan_attr14a['destinations'] == frozenset({'timeseries'}), wan_attr14a)
+check('a wanStatus entry placed in "timeseries" did not leak into di_config either',
+      'active_wan_interface' not in mangled(conn14a, 'di_config'))
+
+wan_both_cfg = dict(base_config)
+wan_both_cfg['timeseries'] = [{'source': 'wanStatus', 'key': 'active_wan_interface'}]
+wan_both_cfg['attributes'] = [{'source': 'wanStatus', 'key': 'active_wan_interface', 'pollPeriod': 3600}]
+gw14b = FakeGateway()
+conn14b = BliiotGpioConnector(gw14b, wan_both_cfg, 'bliiot_gpio')
+wan_attr14b = mangled(conn14b, 'wan_attr')
+check('wanStatus in both lists => destinations == {timeseries, attribute}',
+      wan_attr14b['destinations'] == frozenset({'timeseries', 'attribute'}), wan_attr14b)
+check('wanStatus in both lists: the "attributes" list copy is authoritative for field values (pollPeriod)',
+      wan_attr14b['pollPeriod'] == 3600, wan_attr14b)
+
+mangled(conn14b, 'fan_out_attribute')({wan_attr14b['key']: 'ethernet'})
+check('wanStatus-as-attribute publishes into attributes storage',
+      storage_for(gw14b, 'Device A - Full', kind='attributes').get('active_wan_interface') == 'ethernet')
+gw14b.storage.clear()
+mangled(conn14b, 'fan_out_telemetry')({wan_attr14b['key']: 'ethernet'})
+check('wanStatus-as-timeseries publishes into telemetry storage',
+      storage_for(gw14b, 'Device A - Full', kind='telemetry').get('active_wan_interface') == 'ethernet')
+
+# =====================================================================================
+print('\n--- 15. wanTraffic config parsing (either list, both, defaults) ---')
+
+no_traffic_cfg = dict(base_config)
+gw15a = FakeGateway()
+conn15a = BliiotGpioConnector(gw15a, no_traffic_cfg, 'bliiot_gpio')
+check('wan_traffic is None when no "source": "wanTraffic" entry is present',
+      mangled(conn15a, 'wan_traffic') is None)
+
+traffic_ts_cfg = dict(base_config)
+traffic_ts_cfg['timeseries'] = [{'source': 'wanTraffic'}]
+gw15b = FakeGateway()
+conn15b = BliiotGpioConnector(gw15b, traffic_ts_cfg, 'bliiot_gpio')
+wt15b = mangled(conn15b, 'wan_traffic')
+check('wanTraffic in "timeseries" only, defaults applied',
+      wt15b == {'interfaceNames': {'eth0': 'ethernet', 'usb0': 'cellular'}, 'pollIntervalSec': 60,
+                'resetHour': 0, 'rxKeySuffix': '_rx_bytes', 'txKeySuffix': '_tx_bytes',
+                'destinations': frozenset({'timeseries'})}, wt15b)
+check('a wanTraffic entry placed in "timeseries" did not leak into di_config',
+      'DI9' not in mangled(conn15b, 'di_config') and len(mangled(conn15b, 'di_config')) == 8)
+
+traffic_both_cfg = dict(base_config)
+traffic_both_cfg['timeseries'] = [{'source': 'wanTraffic'}]
+traffic_both_cfg['attributes'] = [{'source': 'wanTraffic', 'pollIntervalSec': 30, 'resetHour': 6,
+                                    'rxKeySuffix': '_in', 'txKeySuffix': '_out'}]
+gw15c = FakeGateway()
+conn15c = BliiotGpioConnector(gw15c, traffic_both_cfg, 'bliiot_gpio')
+wt15c = mangled(conn15c, 'wan_traffic')
+check('wanTraffic in both lists => destinations == {timeseries, attribute}',
+      wt15c['destinations'] == frozenset({'timeseries', 'attribute'}), wt15c)
+check('wanTraffic in both lists: the "attributes" list copy is authoritative for field values',
+      wt15c['pollIntervalSec'] == 30 and wt15c['resetHour'] == 6
+      and wt15c['rxKeySuffix'] == '_in' and wt15c['txKeySuffix'] == '_out', wt15c)
+
+# =====================================================================================
+print('\n--- 16. wanTraffic helper functions (fake NET_STATS_DIR, missing-interface case) ---')
+
+import tempfile as _tempfile
+
+_traffic_test_dir = _tempfile.mkdtemp(prefix='bliiot_net_stats_')
+
+
+def _write_counters(iface, rx, tx):
+    stats_dir = os.path.join(_traffic_test_dir, iface, 'statistics')
+    os.makedirs(stats_dir, exist_ok=True)
+    with open(os.path.join(stats_dir, 'rx_bytes'), 'w') as f:
+        f.write(str(rx))
+    with open(os.path.join(stats_dir, 'tx_bytes'), 'w') as f:
+        f.write(str(tx))
+
+
+_write_counters('eth0', 1000, 2000)
+# usb0 (the configured "cellular" interface) is deliberately never created here --
+# simulates the 4G modem not being installed/registered, same case already covered for
+# WAN status detection in section 12.
+
+real_net_stats_dir = connector_module.NET_STATS_DIR
+connector_module.NET_STATS_DIR = _traffic_test_dir
+try:
+    eth0_counters = mangled(conn15b, 'read_interface_counters')('eth0')
+    usb0_counters = mangled(conn15b, 'read_interface_counters')('usb0')
+    all_counters16 = mangled(conn15b, 'read_all_traffic_counters')()
+finally:
+    connector_module.NET_STATS_DIR = real_net_stats_dir
+
+check('__read_interface_counters reads real rx/tx bytes for an existing interface',
+      eth0_counters == {'rx': 1000, 'tx': 2000}, eth0_counters)
+check('__read_interface_counters returns None (not an exception) for a missing interface (no 4G modem)',
+      usb0_counters is None, usb0_counters)
+check('__read_all_traffic_counters reads every configured interface, missing ones as None',
+      all_counters16 == {'eth0': {'rx': 1000, 'tx': 2000}, 'usb0': None}, all_counters16)
+
+baseline16 = {'eth0': {'rx': 1000, 'tx': 2000}, 'usb0': {'rx': 500, 'tx': 500}}
+current16 = {'eth0': {'rx': 1500, 'tx': 2400}, 'usb0': None}
+totals16 = mangled(conn15b, 'compute_traffic_totals')(baseline16, current16, {'eth0': 'ethernet', 'usb0': 'cellular'},
+                                                        '_rx_bytes', '_tx_bytes')
+check('__compute_traffic_totals computes rx/tx deltas for a present interface',
+      totals16 == {'ethernet_rx_bytes': 500, 'ethernet_tx_bytes': 400}, totals16)
+check('__compute_traffic_totals skips an interface missing from the current reading (no 4G modem)',
+      'cellular_rx_bytes' not in totals16 and 'cellular_tx_bytes' not in totals16, totals16)
+
+reset_current16 = {'eth0': {'rx': 200, 'tx': 100}, 'usb0': {'rx': 600, 'tx': 700}}
+reset_totals16 = mangled(conn15b, 'compute_traffic_totals')(baseline16, reset_current16,
+                                                              {'eth0': 'ethernet', 'usb0': 'cellular'},
+                                                              '_rx_bytes', '_tx_bytes')
+check('__compute_traffic_totals clamps a detected counter reset (reboot/interface flap) to 0, not negative',
+      reset_totals16['ethernet_rx_bytes'] == 0 and reset_totals16['ethernet_tx_bytes'] == 0, reset_totals16)
+
+from datetime import datetime as _dt, timezone as _tz
+
+day_midnight16 = mangled(conn15b, 'traffic_day_for')(_dt(2026, 9, 4, 5, 30, tzinfo=_tz.utc), 0)
+day_offset16 = mangled(conn15b, 'traffic_day_for')(_dt(2026, 9, 4, 5, 30, tzinfo=_tz.utc), 6)
+check('__traffic_day_for at resetHour=0 uses the calendar UTC date directly',
+      day_midnight16 == _dt(2026, 9, 4, tzinfo=_tz.utc).date(), day_midnight16)
+check('__traffic_day_for at resetHour=6: 05:30 UTC still belongs to the PREVIOUS day '
+      '(before that day\'s 06:00 rollover)',
+      day_offset16 == _dt(2026, 9, 3, tzinfo=_tz.utc).date(), day_offset16)
+
+# =====================================================================================
+print('\n--- 17. getWanTraffic RPC ---')
+
+reply = rpc(conn15a, gw15a, 'Device A - Full', 'getWanTraffic')
+check('getWanTraffic replies "not configured" when wanTraffic is not set up',
+      reply and reply.get('success') is False, reply)
+
+connector_module.NET_STATS_DIR = _traffic_test_dir
+try:
+    setattr(conn15b, '_BliiotGpioConnector__wan_traffic_baseline', {'eth0': {'rx': 0, 'tx': 0}})
+    reply_full = rpc(conn15b, gw15b, 'Device A - Full', 'getWanTraffic')
+    reply_restricted = rpc(conn15b, gw15b, 'Device B - Restricted', 'getWanTraffic')
+finally:
+    connector_module.NET_STATS_DIR = real_net_stats_dir
+
+check('getWanTraffic (unrestricted device) returns "sinceReset" totals computed from live counters',
+      reply_full and reply_full.get('success') is True
+      and reply_full.get('sinceReset', {}).get('ethernet_rx_bytes') == 1000, reply_full)
+check('getWanTraffic filters "sinceReset" by the requesting device\'s "attributes" subset '
+      '(Device B\'s is explicitly empty => nothing)',
+      reply_restricted and reply_restricted.get('success') is True
+      and reply_restricted.get('sinceReset', {}) == {}, reply_restricted)
+
+# =====================================================================================
+print('\n--- 18. __wan_traffic_loop: seeds baseline at startup, survives a missing interface, stops cleanly ---')
+
+loop_cfg = dict(base_config)
+loop_cfg['timeseries'] = [{'source': 'wanTraffic', 'pollIntervalSec': 0.05, 'resetHour': 0}]
+gw18 = FakeGateway()
+conn18 = BliiotGpioConnector(gw18, loop_cfg, 'bliiot_gpio')
+mangled(conn18, 'init_gpio')()
+connector_module.NET_STATS_DIR = _traffic_test_dir
+try:
+    traffic_thread = threading.Thread(target=mangled(conn18, 'wan_traffic_loop'), daemon=True)
+    traffic_thread.start()
+    time.sleep(0.2)
+    mangled(conn18, 'stopped').set()
+    traffic_thread.join(timeout=2)
+finally:
+    connector_module.NET_STATS_DIR = real_net_stats_dir
+
+check('__wan_traffic_loop thread exits cleanly on stop', not traffic_thread.is_alive())
+baseline18 = mangled(conn18, 'wan_traffic_baseline')
+check('__wan_traffic_loop seeds a baseline for the existing interface at startup',
+      baseline18.get('eth0') == {'rx': 1000, 'tx': 2000}, baseline18)
+check('__wan_traffic_loop tolerates a missing interface (no 4G modem) in the seeded baseline without crashing',
+      'usb0' in baseline18 and baseline18['usb0'] is None, baseline18)
+
+import shutil as _shutil
+
+_shutil.rmtree(_traffic_test_dir, ignore_errors=True)
 
 # =====================================================================================
 print('\n' + ('=' * 70))

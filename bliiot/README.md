@@ -153,6 +153,8 @@ not start. See "Migrating an existing config" below.
 | `"gpio"."heartbeatIntervalSec"` | `"gpio"."pollPeriod"` (still seconds) |
 | n/a | `"gpio"."reportOnChange"` (new, default `true`) |
 | `"devices"` (list, but only `devices[0]` was ever used) | `"devices"` (list, genuinely multi-device -- see "Duplicating one input to multiple devices" below) |
+| n/a | DI channels and `"wanStatus"` can be placed in `"timeseries"`, `"attributes"`, or both (new, same-day second pass, additive -- see "Destination flexibility" below) |
+| n/a | an entry in `"timeseries"`/`"attributes"` with `"source": "wanTraffic"` (new, opt-in -- see "WAN traffic" below) |
 
 `"gpio"."pollIntervalMs"` (physical DI sampling/debounce rate) is unchanged and is
 **not** the same thing as `"gpio"."pollPeriod"` -- see the "DI reporting" section below
@@ -165,6 +167,70 @@ board-default `offset` -- only list it if you're overriding something (`activeLo
 standard channels (a custom/renamed channel -- see "Renaming channels" below) must
 include an explicit `"offset"`; without one it's skipped at startup with a logged error
 rather than crashing the connector.
+
+## Destination flexibility: `timeseries`, `attributes`, or both (2026-09-04, same-day second pass)
+
+**Additive -- does not require touching an already-migrated config.** Exactly like
+BACnet, where the identical point shape can be placed in either `"timeseries"` or
+`"attributes"` to decide whether it becomes telemetry or a device attribute, a DI
+channel's entry and the `"source": "wanStatus"` entry can now each be placed in
+`"timeseries"`, `"attributes"`, or **both**:
+
+* In `"timeseries"` only -- publishes as telemetry only (unchanged default: a standard
+  DI channel mentioned in neither list still defaults to this).
+* In `"attributes"` only -- publishes as a device attribute only. This is what makes
+  "attribute only, no telemetry at all" possible for a channel that would otherwise
+  default to timeseries.
+* In both lists -- publishes both ways.
+* Conflicting explicit `"offset"` values between the two entries for the same key is a
+  hard startup error (they describe the same physical line, so they must agree, or only
+  one entry should set it). Conflicting `"activeLow"`/`"bias"`/`"debounceMs"` between the
+  two entries is not an error -- the `"timeseries"` entry's values win, documented rather
+  than silent.
+* For `"wanStatus"` (and the new `"wanTraffic"`, below), if both lists carry their own
+  copy with different field values, the **`"attributes"` list's copy is authoritative**
+  for those fields -- the `"timeseries"` list's copy only adds "also publish as
+  telemetry" to the destination set.
+
+See `claude/bliiot-gpio-config-reference.md`'s "Destination is list membership" section
+for the full mechanics, and `bliiot/test/offline_connector_test.py` sections 13-14 for
+this exercised offline.
+
+## WAN traffic: daily Ethernet/cellular byte-volume totals (new, 2026-09-04)
+
+A new, fully opt-in `"source": "wanTraffic"` entry (placed in `"timeseries"` and/or
+`"attributes"`, same either-list-or-both mechanism as above) reports each configured WAN
+interface's **daily** received/transmitted byte totals -- separate
+`<friendly name><rxKeySuffix>`/`<friendly name><txKeySuffix>` keys per interface (e.g.
+`ethernet_rx_bytes`, `cellular_tx_bytes`), sampled from
+`/sys/class/net/<iface>/statistics/{rx,tx}_bytes` every `"pollIntervalSec"` (default 60s)
+and published once per `"resetHour"` (UTC, default `0` = midnight) rollover:
+
+```json
+{
+  "source": "wanTraffic",
+  "pollIntervalSec": 60,
+  "resetHour": 0,
+  "rxKeySuffix": "_rx_bytes",
+  "txKeySuffix": "_tx_bytes",
+  "interfaceNames": {"eth0": "ethernet", "usb0": "cellular"}
+}
+```
+
+An interface not currently present (no 4G modem installed/registered) is skipped for
+that reading, same "don't crash on a missing interface" philosophy as WAN status. A
+`getWanTraffic` RPC (see "RPC and attribute API" below) returns the running totals
+accumulated so far since the current baseline, on demand.
+
+**Known limitation, by design:** the daily accumulator is **in-memory only** and is
+**not persisted across a connector/gateway restart** -- a restart mid-day starts a
+fresh, shorter accumulation window rather than resuming the interrupted one, and a
+detected counter reset (interface flap, reboot) is re-baselined rather than carried
+forward, so that day's total for the affected interface undercounts. Fine for a rough
+daily trend, not billing-grade. See `claude/bliiot-gpio-config-reference.md`'s "WAN
+traffic" section for the full field reference, and `bliiot/test/
+offline_connector_test.py` sections 15-18 for this exercised offline (including the
+missing-interface case against a fake stats directory).
 
 ### Renaming channels for telemetry
 
@@ -349,7 +415,12 @@ It covers the 2026-09-04 schema rewrite specifically: `timeseries`/`attributes`/
 `reportOnChange` in both states, multi-device telemetry/attribute/RPC fan-out and
 per-device authorization, per-channel RPC method dispatch, and the WAN loop's behaviour
 when no interface holds the default route (4G modem not installed, or Ethernet down with
-no modem fitted at all).
+no modem fitted at all). Also covers the same-day second pass: DI-channel and WAN-status
+destination flexibility (`timeseries`-only/`attributes`-only/both, including the
+offset-conflict and field-priority rules), the new WAN traffic feature's config parsing,
+its pure helper functions against a fake stats directory (including the no-4G-modem
+missing-interface case and a detected counter-reset clamp), the `getWanTraffic` RPC, and
+the WAN traffic loop's startup/shutdown lifecycle -- 93 checks in all.
 
 ## RPC and attribute API
 
@@ -370,6 +441,7 @@ see/control (see "Duplicating one input to multiple ThingsBoard devices" above):
 | `setAllDo` | `{"state": false}` | `{"success", "channels": {...}}` -- only the channels the requesting device's `serverSideRpc` subset authorizes |
 | `getDi` | `{"channel": "DI1"}` or `{}` for all | `{"success", "channel"?, "state"?, "channels"?}` -- only channels the requesting device's `timeseries` subset includes |
 | `getWanStatus` | `{}` | `{"success", "active_wan_interface"}` -- fails with a clear error if WAN reporting isn't configured at all, or if the requesting device's `attributes` subset excludes the key |
+| `getWanTraffic` (new) | `{}` | `{"success", "sinceReset": {...}}` -- running byte totals since the current daily baseline, filtered to the requesting device's `attributes` subset; fails with a clear error if the `wanTraffic` feature isn't configured at all |
 
 Calling a DO channel's method (or any method at all) from a device not authorized for
 that channel returns `{"success": false, "error": "..."}` rather than silently no-oping
@@ -382,23 +454,27 @@ connector applies it the same way the RPC does, subject to the same per-device
 `serverSideRpc` authorization check (an unauthorized device's shared-attribute write is
 ignored with a logged warning, not silently accepted).
 
-Telemetry keys are the configured `"timeseries"`/`"serverSideRpc"` channel keys (`DI1`..
-`DI8`, `DO1`..`DO4` by default) as booleans, published on change (if
-`"gpio"."reportOnChange"` is `true`, the default) plus an unconditional full-state resend
-every `"gpio"."pollPeriod"` (default 60s) -- see "DI reporting" above. The active WAN path
-is published as the configured WAN attribute's `"key"` (`active_wan_interface` by
-default) with value `"ethernet"`/`"cellular"` (from `"interfaceNames"`) or the interface's
-raw name if it isn't in that map, or `"unknown"` if no interface currently holds the
-default route at all (Ethernet down and no cellular modem registered, or no modem
-fitted). Published on change **and** re-published unconditionally every WAN attribute
-entry's own `"pollPeriod"` (default 15s, independent of `"gpio"."pollPeriod"`). That
-unconditional resend was added after a live finding on Kelvin26001 (2026-09-03): the
-attribute used to be published on-change only, so if the platform ever lost it
-independently of the interface actually changing (e.g. the gateway device being deleted
-and recreated on the platform), it would stay blank/stale until the connector process was
-restarted. The resend bounds that to one poll interval, with no restart needed. See
-`bliiot/test/offline_connector_test.py` section 12 for the no-modem/no-default-route
-case specifically.
+Telemetry/attribute keys are the configured `"timeseries"`/`"attributes"`/
+`"serverSideRpc"` channel keys (`DI1`..`DI8`, `DO1`..`DO4` by default) as booleans,
+published on change (if `"gpio"."reportOnChange"` is `true`, the default) plus an
+unconditional full-state resend every `"gpio"."pollPeriod"` (default 60s) -- see "DI
+reporting" above -- to whichever destination(s) (telemetry, attribute, or both) that
+channel is configured for, see "Destination flexibility" above. DO channel state is
+always telemetry only. The active WAN path is published under the configured WAN
+entry's `"key"` (`active_wan_interface` by default) with value `"ethernet"`/`"cellular"`
+(from `"interfaceNames"`) or the interface's raw name if it isn't in that map, or
+`"unknown"` if no interface currently holds the default route at all (Ethernet down and
+no cellular modem registered, or no modem fitted). Published on change **and**
+re-published unconditionally every WAN entry's own `"pollPeriod"` (default 15s,
+independent of `"gpio"."pollPeriod"`). That unconditional resend was added after a live
+finding on Kelvin26001 (2026-09-03): the attribute used to be published on-change only,
+so if the platform ever lost it independently of the interface actually changing (e.g.
+the gateway device being deleted and recreated on the platform), it would stay
+blank/stale until the connector process was restarted. The resend bounds that to one
+poll interval, with no restart needed. See `bliiot/test/offline_connector_test.py`
+section 12 for the no-modem/no-default-route case specifically. WAN traffic (if
+configured) publishes its daily `<friendly><rxKeySuffix>`/`<friendly><txKeySuffix>`
+totals once per `"resetHour"` rollover -- see "WAN traffic" above.
 
 ## Boot-time safety net
 
