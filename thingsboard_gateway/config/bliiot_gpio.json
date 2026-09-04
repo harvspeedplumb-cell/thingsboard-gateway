@@ -5,35 +5,38 @@
     "boardType": "X26",
     "chip": "auto",
     "pollIntervalMs": 200,
-    "heartbeatIntervalSec": 60,
+    "pollPeriod": 60,
+    "reportOnChange": true,
     "eventDriven": false,
-    "doAttributeUpdateSuffix": "_set",
-    "digitalInputs": {
-      "DI1": {"offset": 12, "activeLow": true, "bias": "as-is", "debounceMs": 50},
-      "DI2": {"offset": 4,  "activeLow": true, "bias": "as-is", "debounceMs": 50},
-      "DI3": {"offset": 16, "activeLow": true, "bias": "as-is", "debounceMs": 50},
-      "DI4": {"offset": 27, "activeLow": true, "bias": "as-is", "debounceMs": 50},
-      "DI5": {"offset": 25, "activeLow": true, "bias": "as-is", "debounceMs": 50},
-      "DI6": {"offset": 22, "activeLow": true, "bias": "as-is", "debounceMs": 50},
-      "DI7": {"offset": 13, "activeLow": true, "bias": "as-is", "debounceMs": 50},
-      "DI8": {"offset": 5,  "activeLow": true, "bias": "as-is", "debounceMs": 50}
-    },
-    "digitalOutputs": {
-      "DO1": {"offset": 24, "activeLow": true},
-      "DO2": {"offset": 23, "activeLow": true},
-      "DO3": {"offset": 7,  "activeLow": true},
-      "DO4": {"offset": 3,  "activeLow": true}
-    }
+    "doAttributeUpdateSuffix": "_set"
   },
-  "wanStatus": {
-    "enabled": true,
-    "pollIntervalSec": 15,
-    "attributeKey": "active_wan_interface",
-    "interfaceNames": {
-      "eth0": "ethernet",
-      "usb0": "cellular"
+  "timeseries": [
+    {"key": "DI1", "activeLow": true, "bias": "as-is", "debounceMs": 50},
+    {"key": "DI2", "activeLow": true, "bias": "as-is", "debounceMs": 50},
+    {"key": "DI3", "activeLow": true, "bias": "as-is", "debounceMs": 50},
+    {"key": "DI4", "activeLow": true, "bias": "as-is", "debounceMs": 50},
+    {"key": "DI5", "activeLow": true, "bias": "as-is", "debounceMs": 50},
+    {"key": "DI6", "activeLow": true, "bias": "as-is", "debounceMs": 50},
+    {"key": "DI7", "activeLow": true, "bias": "as-is", "debounceMs": 50},
+    {"key": "DI8", "activeLow": true, "bias": "as-is", "debounceMs": 50}
+  ],
+  "serverSideRpc": [
+    {"key": "DO1", "activeLow": true},
+    {"key": "DO2", "activeLow": true},
+    {"key": "DO3", "activeLow": true},
+    {"key": "DO4", "activeLow": true}
+  ],
+  "attributes": [
+    {
+      "source": "wanStatus",
+      "key": "active_wan_interface",
+      "pollPeriod": 15,
+      "interfaceNames": {
+        "eth0": "ethernet",
+        "usb0": "cellular"
+      }
     }
-  },
+  ],
   "devices": [
     {
       "name": "BLIIOT X26 IO",

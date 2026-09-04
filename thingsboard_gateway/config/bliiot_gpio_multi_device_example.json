@@ -1,0 +1,68 @@
+{
+  "//": "Example only -- NOT the default config. Copy the relevant bits into your own",
+  "// 2": "bliiot_gpio.json rather than using this file verbatim. Demonstrates duplicating",
+  "// 3": "physical DI/DO/WAN readings to more than one ThingsBoard device from a single",
+  "// 4": "connector instance, the same pattern the built-in BACnet connector already",
+  "// 5": "supports by listing the same object under two 'devices' blocks -- see this",
+  "// 6": "connector's module docstring for why it has to happen inside ONE connector",
+  "// 7": "instance/ONE gpiod line request rather than two independent connector processes",
+  "// 8": "(GPIO chardev lines are exclusively locked; two processes requesting the same",
+  "// 9": "offset would collide with 'Device or resource busy').",
+  "name": "BLIIOT X26 GPIO Connector",
+  "logLevel": "INFO",
+  "gpio": {
+    "boardType": "X26",
+    "chip": "auto",
+    "pollIntervalMs": 200,
+    "pollPeriod": 60,
+    "reportOnChange": true,
+    "eventDriven": false,
+    "doAttributeUpdateSuffix": "_set"
+  },
+  "timeseries": [
+    {"key": "DI1", "activeLow": true, "bias": "as-is", "debounceMs": 50},
+    {"key": "DI2", "activeLow": true, "bias": "as-is", "debounceMs": 50},
+    {"key": "DI3", "activeLow": true, "bias": "as-is", "debounceMs": 50},
+    {"key": "DI4", "activeLow": true, "bias": "as-is", "debounceMs": 50},
+    {"key": "DI5", "activeLow": true, "bias": "as-is", "debounceMs": 50},
+    {"key": "DI6", "activeLow": true, "bias": "as-is", "debounceMs": 50},
+    {"key": "DI7", "activeLow": true, "bias": "as-is", "debounceMs": 50},
+    {"key": "DI8", "activeLow": true, "bias": "as-is", "debounceMs": 50}
+  ],
+  "serverSideRpc": [
+    {"key": "DO1", "activeLow": true},
+    {"key": "DO2", "activeLow": true},
+    {"key": "DO3", "activeLow": true},
+    {"key": "DO4", "activeLow": true}
+  ],
+  "attributes": [
+    {
+      "source": "wanStatus",
+      "key": "active_wan_interface",
+      "pollPeriod": 15,
+      "interfaceNames": {
+        "eth0": "ethernet",
+        "usb0": "cellular"
+      }
+    }
+  ],
+  "devices": [
+    {
+      "//": "Primary device: sees and controls everything -- omitting timeseries/attributes/serverSideRpc entirely means 'no restriction'.",
+      "name": "BLIIOT X26 IO",
+      "type": "default",
+      "converter": "BliiotGpioUplinkConverter",
+      "downlink_converter": "BliiotGpioDownlinkConverter"
+    },
+    {
+      "//": "Second device, duplicating a SUBSET of the same physical inputs/outputs/WAN status to a different ThingsBoard device -- e.g. a restricted dashboard, or a separate customer/tenant device that should only ever see DI1/DI2 (say, a door/security-panel pair) and may only ever switch DO1 (say, a single shared alarm relay), never the other 3 DO channels or any other DI. It never sees the WAN attribute at all (an empty attributes list, not an omitted one).",
+      "name": "BLIIOT X26 IO - Security Subset",
+      "type": "default",
+      "converter": "BliiotGpioUplinkConverter",
+      "downlink_converter": "BliiotGpioDownlinkConverter",
+      "timeseries": ["DI1", "DI2"],
+      "serverSideRpc": ["DO1"],
+      "attributes": []
+    }
+  ]
+}
