@@ -98,8 +98,8 @@ whether it becomes ThingsBoard telemetry or a device attribute, a DI channel's e
     treated as an error -- same "don't crash on a missing interface" philosophy as WAN status.
 
 This is the built-in "connectors/" variant: installed as part of the thingsboard_gateway
-Python package itself (thingsboard_gateway/connectors/bliiot_gpio/), so gpio_map.py (this
-variant's name for the sibling hardware-mapping helper module -- called bliiot_gpio_map.py
+Python package itself (thingsboard_gateway/connectors/hva_kelvin_v1_gpio/), so gpio_map.py (this
+variant's name for the sibling hardware-mapping helper module -- called hva_kelvin_v1_gpio_map.py
 in the "extensions/" drop-in variant of this same connector) is importable as a normal
 package-relative import, no sys.path shim needed. Kept functionally identical to the
 extensions/ variant -- see that copy's module docstring for the sys.path-shim rationale
@@ -115,7 +115,7 @@ from string import ascii_lowercase
 from threading import Event, Lock, Thread
 from time import monotonic, sleep
 
-from thingsboard_gateway.connectors.bliiot_gpio.gpio_map import (
+from thingsboard_gateway.connectors.hva_kelvin_v1_gpio.gpio_map import (
     DEFAULT_BOARD_TYPE,
     GpioMapError,
     SAFE_DO_STATE,
@@ -139,8 +139,8 @@ except ImportError:
     import gpiod
     from gpiod.line import Bias, Direction, Edge
 
-DEFAULT_UPLINK_CONVERTER = 'BliiotGpioUplinkConverter'
-DEFAULT_DOWNLINK_CONVERTER = 'BliiotGpioDownlinkConverter'
+DEFAULT_UPLINK_CONVERTER = 'HVAKelvinV1GpioUplinkConverter'
+DEFAULT_DOWNLINK_CONVERTER = 'HVAKelvinV1GpioDownlinkConverter'
 
 _BIAS_MAP = {
     'as-is': Bias.AS_IS,
@@ -156,13 +156,13 @@ _DO_ACTIONS = ('set', 'get', 'toggle')
 NET_STATS_DIR = '/sys/class/net'
 
 
-class BliiotGpioConnector(Connector, Thread):
+class HVAKelvinV1GpioConnector(Connector, Thread):
 
     def __init__(self, gateway, config, connector_type):
         Thread.__init__(self)
         self.daemon = True
         self.name = config.get('name',
-                                'BLIIOT GPIO Connector ' + ''.join(choice(ascii_lowercase) for _ in range(5)))
+                                'HVAKelvinV1 GPIO Connector ' + ''.join(choice(ascii_lowercase) for _ in range(5)))
 
         self.__config = config
         self.__id = config.get('id')
@@ -192,7 +192,7 @@ class BliiotGpioConnector(Connector, Thread):
         # been validated against real hardware yet (unlike the polling path, which only
         # relies on request_lines()/get_values(), the same primitives the project's own
         # confirmed-working test scripts used). Flip it on once it's been checked with
-        # bliiot/test/gpio_smoke_test.py against the real box.
+        # hva_kelvin_v1/test/gpio_smoke_test.py against the real box.
         self.__event_driven = gpio_cfg.get('eventDriven', False)
         self.__do_attr_suffix = gpio_cfg.get('doAttributeUpdateSuffix', '_set')
 
@@ -568,8 +568,8 @@ class BliiotGpioConnector(Connector, Thread):
         devices = []
         seen_names = set()
         for i, entry in enumerate(entries):
-            name = entry.get('name', self.__config.get('deviceName', 'BLIIOT X26 IO') if i == 0
-                              else f'BLIIOT X26 IO {i + 1}')
+            name = entry.get('name', self.__config.get('deviceName', 'HVAKelvinV1 X26 IO') if i == 0
+                              else f'HVAKelvinV1 X26 IO {i + 1}')
             if name in seen_names:
                 raise ValueError(f'Duplicate device name "{name}" in "devices" -- each device needs a unique name.')
             seen_names.add(name)
@@ -615,7 +615,7 @@ class BliiotGpioConnector(Connector, Thread):
                 edge_detection=Edge.BOTH if self.__event_driven else Edge.NONE,
                 debounce_period=timedelta(milliseconds=cfg.get('debounceMs', 50)),
             )
-        self.__di_request = gpiod.request_lines(self.__chip_path, consumer='bliiot-gpio-connector-di',
+        self.__di_request = gpiod.request_lines(self.__chip_path, consumer='hva-kelvin-v1-gpio-connector-di',
                                                   config=di_line_settings)
 
         do_line_settings = {}
@@ -624,7 +624,7 @@ class BliiotGpioConnector(Connector, Thread):
                 direction=Direction.OUTPUT,
                 output_value=do_state_to_raw(SAFE_DO_STATE, active_low=cfg.get('activeLow', True)),
             )
-        self.__do_request = gpiod.request_lines(self.__chip_path, consumer='bliiot-gpio-connector-do',
+        self.__do_request = gpiod.request_lines(self.__chip_path, consumer='hva-kelvin-v1-gpio-connector-do',
                                                   config=do_line_settings)
 
         # Belt-and-braces: explicitly re-assert the safe state right after the request
@@ -829,7 +829,7 @@ class BliiotGpioConnector(Connector, Thread):
         # connector has already been running, etc.), a pure on-change publish would never
         # notice and the attribute would just stay blank/stale until the connector process
         # restarts and __last_wan_value re-initialises to None. Confirmed live on
-        # Kelvin26001 (2026-09-03): Harv deleted the "BLIIOT X26 IO" device on the platform
+        # Kelvin26001 (2026-09-03): Harv deleted the "HVAKelvinV1 X26 IO" device on the platform
         # while the interface value hadn't changed since, active_wan_interface never came
         # back, and restarting thingsboard-gateway was the only thing that fixed it.
         # Fixed by also forcing an unconditional resend every this attribute's own

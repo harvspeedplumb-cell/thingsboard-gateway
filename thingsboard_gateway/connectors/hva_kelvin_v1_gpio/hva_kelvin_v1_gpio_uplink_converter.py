@@ -16,7 +16,7 @@ from thingsboard_gateway.connectors.converter import Converter
 from thingsboard_gateway.gateway.entities.converted_data import ConvertedData
 
 
-class BliiotGpioUplinkConverter(Converter):
+class HVAKelvinV1GpioUplinkConverter(Converter):
     """
     Turns the connector's already-decoded GPIO/WAN readings into a ConvertedData object.
 
@@ -61,6 +61,6 @@ class BliiotGpioUplinkConverter(Converter):
             if attributes:
                 converted_data.add_to_attributes(attributes)
         except Exception as e:
-            self._log.exception('Failed converting BLIIOT GPIO data to ConvertedData: %s', e)
+            self._log.exception('Failed converting HVAKelvinV1 GPIO data to ConvertedData: %s', e)
 
         return converted_data

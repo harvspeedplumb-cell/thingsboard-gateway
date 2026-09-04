@@ -2,12 +2,12 @@
 """
 Real (not mocked) proof that the gateway's stock, UNMODIFIED Modbus connector already
 supports duplicating one physical input to more than one ThingsBoard device -- the same
-capability requested for the BLIIOT GPIO connector (see bliiot/test/offline_connector_test.py
-in the "extensions/" delivery, and thingsboard_gateway/connectors/bliiot_gpio's own
+capability requested for the HVAKelvinV1 GPIO connector (see hva_kelvin_v1/test/offline_connector_test.py
+in the "extensions/" delivery, and thingsboard_gateway/connectors/hva_kelvin_v1_gpio's own
 "devices"/"timeseries" subset mechanism) and that BACnet already provides by listing the
 same object under two "devices" blocks in bacnet.json.
 
-Unlike BLIIOT GPIO, Modbus needs NO special connector-side fan-out mechanism at all: it's
+Unlike HVAKelvinV1 GPIO, Modbus needs NO special connector-side fan-out mechanism at all: it's
 a bus/network protocol, not an exclusively-lockable local GPIO chardev line, so two
 independent "slaves" entries in thingsboard_gateway/config/modbus.json's "master.slaves"
 LIST can simply be given identical "host"/"port"/"unitId"/"address" and different
@@ -16,14 +16,14 @@ proves that by running a real local pymodbus TCP test server (not mocked) and a 
 completely unmodified AsyncModbusConnector against it, with two "slaves" entries that are
 identical except for "deviceName", both reading the exact same holding register. Only the
 ThingsBoard *gateway* boundary is faked (add_device/send_to_storage/send_rpc_reply) --
-the same scope of mocking the BLIIOT GPIO offline test uses, and for the same reason:
+the same scope of mocking the HVAKelvinV1 GPIO offline test uses, and for the same reason:
 there's no live ThingsBoard platform to talk to in an offline/CI check.
 
 Requires the gateway's own normal dependencies (pymodbus, jsonpath-rw, simplejson -- all
 already in this repo's requirements.txt/requirements-full.txt; nothing extra to install)
 and this repo checkout on PYTHONPATH. Run from the repo root:
 
-    python3 bliiot/test/modbus_duplicate_device_test.py
+    python3 hva_kelvin_v1/test/modbus_duplicate_device_test.py
 
 Exits 0 if both device blocks report the same value from the same register on every poll,
 1 otherwise (with the mismatch printed).

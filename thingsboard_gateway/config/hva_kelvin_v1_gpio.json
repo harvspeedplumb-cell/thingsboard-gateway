@@ -6,7 +6,7 @@
   "// 5": "(DI as timeseries, wanStatus as attribute, wanTraffic as timeseries) matches what",
   "// 6": "Kelvin26001 already runs -- moving a channel to 'attributes' as well (or instead) is",
   "// 7": "optional and can be done per-box without touching the connector code.",
-  "name": "BLIIOT X26 GPIO Connector",
+  "name": "HVAKelvinV1 X26 GPIO Connector",
   "logLevel": "INFO",
   "gpio": {
     "boardType": "X26",
@@ -58,10 +58,10 @@
   ],
   "devices": [
     {
-      "name": "BLIIOT X26 IO",
+      "name": "HVAKelvinV1 X26 IO",
       "type": "default",
-      "converter": "BliiotGpioUplinkConverter",
-      "downlink_converter": "BliiotGpioDownlinkConverter"
+      "converter": "HVAKelvinV1GpioUplinkConverter",
+      "downlink_converter": "HVAKelvinV1GpioDownlinkConverter"
     }
   ]
 }

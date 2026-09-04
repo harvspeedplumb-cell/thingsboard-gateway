@@ -12,11 +12,11 @@
 #     See the License for the specific language governing permissions and
 #     limitations under the License.
 
-from thingsboard_gateway.connectors.bliiot_gpio.gpio_map import do_state_to_raw
+from thingsboard_gateway.connectors.hva_kelvin_v1_gpio.gpio_map import do_state_to_raw
 from thingsboard_gateway.connectors.converter import Converter
 
 
-class BliiotGpioDownlinkConverter(Converter):
+class HVAKelvinV1GpioDownlinkConverter(Converter):
     """
     Translates a single requested DO write (from an RPC call or a shared attribute
     update, both normalised by the connector into the same shape before reaching here)
@@ -29,7 +29,7 @@ class BliiotGpioDownlinkConverter(Converter):
     consistent with how every other connector in this repo splits "decide what to write"
     (converter) from "actually write it" (connector).
 
-    Expected `config` (from the device's "digitalOutputs" list in bliiot_gpio.json):
+    Expected `config` (from the device's "digitalOutputs" list in hva_kelvin_v1_gpio.json):
         {"DO1": {"offset": 24, "activeLow": true}, "DO2": {...}, ...}
 
     Expected `data`:
@@ -41,13 +41,13 @@ class BliiotGpioDownlinkConverter(Converter):
 
     def convert(self, config, data):
         if not data or 'channel' not in data or 'state' not in data:
-            self._log.error('BLIIOT GPIO downlink request missing "channel" or "state": %s', data)
+            self._log.error('HVAKelvinV1 GPIO downlink request missing "channel" or "state": %s', data)
             return None
 
         channel = data['channel']
         channel_config = (config or {}).get(channel)
         if channel_config is None:
-            self._log.error('BLIIOT GPIO downlink request for unknown DO channel "%s"', channel)
+            self._log.error('HVAKelvinV1 GPIO downlink request for unknown DO channel "%s"', channel)
             return None
 
         requested_state = bool(data['state'])

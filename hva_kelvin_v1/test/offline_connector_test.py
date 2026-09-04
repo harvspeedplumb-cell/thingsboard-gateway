@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Offline (no real hardware, no gpiochip device node, no installed thingsboard_gateway
-package required) verification for the built-in connectors/bliiot_gpio variant's (bliiot_gpio_connector.py) 2026-09-04 BACnet-convention
+package required) verification for the built-in connectors/hva_kelvin_v1_gpio variant's (hva_kelvin_v1_gpio_connector.py) 2026-09-04 BACnet-convention
 config schema rewrite (timeseries/attributes/serverSideRpc/devices, "gpio.reportOnChange",
 "gpio.pollPeriod", per-channel RPC method naming).
 
@@ -66,7 +66,7 @@ Covers, in order:
 
 Run directly, no arguments, no pytest dependency:
 
-    python3 bliiot/test/offline_connector_test.py
+    python3 hva_kelvin_v1/test/offline_connector_test.py
 
 Exits 0 if every check passes, 1 (with a summary of what failed) otherwise.
 """
@@ -142,7 +142,7 @@ class FakeLineRequest:
         for offset, settings in config.items():
             ov = getattr(settings, 'output_value', None)
             # Idle DI reads raw ACTIVE per the confirmed hardware behaviour this
-            # connector's polarity handling is built around (see bliiot_gpio_map.py).
+            # connector's polarity handling is built around (see hva_kelvin_v1_gpio_map.py).
             self.values[offset] = ov if ov is not None else Value.ACTIVE
         self.fd = None
 
@@ -290,18 +290,18 @@ sys.modules['thingsboard_gateway.gateway.entities.converted_data'] = converted_d
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 FORK_PKG_DIR = os.path.normpath(os.path.join(_THIS_DIR, '..', '..', 'thingsboard_gateway',
-                                              'connectors', 'bliiot_gpio'))
-bliiot_gpio_pkg = types.ModuleType('thingsboard_gateway.connectors.bliiot_gpio')
-bliiot_gpio_pkg.__path__ = [FORK_PKG_DIR]
-sys.modules['thingsboard_gateway.connectors.bliiot_gpio'] = bliiot_gpio_pkg
+                                              'connectors', 'hva_kelvin_v1_gpio'))
+hva_kelvin_v1_gpio_pkg = types.ModuleType('thingsboard_gateway.connectors.hva_kelvin_v1_gpio')
+hva_kelvin_v1_gpio_pkg.__path__ = [FORK_PKG_DIR]
+sys.modules['thingsboard_gateway.connectors.hva_kelvin_v1_gpio'] = hva_kelvin_v1_gpio_pkg
 
-uplink_mod = importlib.import_module('thingsboard_gateway.connectors.bliiot_gpio.bliiot_gpio_uplink_converter')
-downlink_mod = importlib.import_module('thingsboard_gateway.connectors.bliiot_gpio.bliiot_gpio_downlink_converter')
-TBModuleLoader._registry['BliiotGpioUplinkConverter'] = uplink_mod.BliiotGpioUplinkConverter
-TBModuleLoader._registry['BliiotGpioDownlinkConverter'] = downlink_mod.BliiotGpioDownlinkConverter
+uplink_mod = importlib.import_module('thingsboard_gateway.connectors.hva_kelvin_v1_gpio.hva_kelvin_v1_gpio_uplink_converter')
+downlink_mod = importlib.import_module('thingsboard_gateway.connectors.hva_kelvin_v1_gpio.hva_kelvin_v1_gpio_downlink_converter')
+TBModuleLoader._registry['HVAKelvinV1GpioUplinkConverter'] = uplink_mod.HVAKelvinV1GpioUplinkConverter
+TBModuleLoader._registry['HVAKelvinV1GpioDownlinkConverter'] = downlink_mod.HVAKelvinV1GpioDownlinkConverter
 
-connector_module = importlib.import_module('thingsboard_gateway.connectors.bliiot_gpio.bliiot_gpio_connector')
-BliiotGpioConnector = connector_module.BliiotGpioConnector
+connector_module = importlib.import_module('thingsboard_gateway.connectors.hva_kelvin_v1_gpio.hva_kelvin_v1_gpio_connector')
+HVAKelvinV1GpioConnector = connector_module.HVAKelvinV1GpioConnector
 
 
 class FakeGateway:
@@ -334,14 +334,14 @@ def storage_for(gateway, device_name, kind='telemetry'):
 
 
 def mangled(obj, name):
-    return getattr(obj, f'_BliiotGpioConnector__{name}')
+    return getattr(obj, f'_HVAKelvinV1GpioConnector__{name}')
 
 
 # =====================================================================================
 print('--- 1. Basic config parsing (board defaults, method map, wan attr, devices) ---')
 
 base_config = {
-    'name': 'BLIIOT GPIO Test',
+    'name': 'HVAKelvinV1 GPIO Test',
     'gpio': {
         'chip': 'test0',
         'pollIntervalMs': 20,
@@ -367,7 +367,7 @@ base_config = {
 }
 
 gw1 = FakeGateway()
-conn1 = BliiotGpioConnector(gw1, base_config, 'bliiot_gpio')
+conn1 = HVAKelvinV1GpioConnector(gw1, base_config, 'hva_kelvin_v1_gpio')
 
 check('DI channels default to X26 board offsets',
       set(mangled(conn1, 'di_config')) == {f'DI{i}' for i in range(1, 9)},
@@ -408,7 +408,7 @@ print('\n--- 2. Custom channel offset-optional rule ---')
 custom_cfg = dict(base_config)
 custom_cfg['timeseries'] = [{'key': 'DI_CUSTOM_NO_OFFSET'}, {'key': 'DI_CUSTOM_WITH_OFFSET', 'offset': 26}]
 gw_custom = FakeGateway()
-conn_custom = BliiotGpioConnector(gw_custom, custom_cfg, 'bliiot_gpio')
+conn_custom = HVAKelvinV1GpioConnector(gw_custom, custom_cfg, 'hva_kelvin_v1_gpio')
 di_cfg = mangled(conn_custom, 'di_config')
 check('custom key with no offset is skipped (logged error, not fatal)',
       'DI_CUSTOM_NO_OFFSET' not in di_cfg)
@@ -426,7 +426,7 @@ collision_cfg['serverSideRpc'] = [
     {'key': 'DO2', 'setMethod': 'sharedMethod'},
 ]
 try:
-    BliiotGpioConnector(FakeGateway(), collision_cfg, 'bliiot_gpio')
+    HVAKelvinV1GpioConnector(FakeGateway(), collision_cfg, 'hva_kelvin_v1_gpio')
     check('duplicate RPC method name raises ValueError', False, 'no exception raised')
 except ValueError as e:
     check('duplicate RPC method name raises ValueError', True, str(e))
@@ -437,7 +437,7 @@ print('\n--- 4. Duplicate device name detection ---')
 dup_cfg = dict(base_config)
 dup_cfg['devices'] = [{'name': 'Same'}, {'name': 'Same'}]
 try:
-    BliiotGpioConnector(FakeGateway(), dup_cfg, 'bliiot_gpio')
+    HVAKelvinV1GpioConnector(FakeGateway(), dup_cfg, 'hva_kelvin_v1_gpio')
     check('duplicate device name raises ValueError', False, 'no exception raised')
 except ValueError as e:
     check('duplicate device name raises ValueError', True, str(e))
@@ -446,7 +446,7 @@ except ValueError as e:
 print('\n--- 5. Multi-device telemetry fan-out (DI change) ---')
 
 gw2 = FakeGateway()
-conn2 = BliiotGpioConnector(gw2, base_config, 'bliiot_gpio')
+conn2 = HVAKelvinV1GpioConnector(gw2, base_config, 'hva_kelvin_v1_gpio')
 mangled(conn2, 'init_gpio')()
 
 di1_offset = mangled(conn2, 'di_config')['DI1']['offset']
@@ -480,7 +480,7 @@ no_change_cfg['gpio']['reportOnChange'] = False
 no_change_cfg['gpio']['pollPeriod'] = 3600  # long enough that the periodic force-publish won't fire
 no_change_cfg['gpio']['pollIntervalMs'] = 20
 gw3 = FakeGateway()
-conn3 = BliiotGpioConnector(gw3, no_change_cfg, 'bliiot_gpio')
+conn3 = HVAKelvinV1GpioConnector(gw3, no_change_cfg, 'hva_kelvin_v1_gpio')
 mangled(conn3, 'init_gpio')()
 
 di1_offset_3 = mangled(conn3, 'di_config')['DI1']['offset']
@@ -506,7 +506,7 @@ check('a manual/periodic full-state publish still carries the un-published chang
 print('\n--- 7. DO write -> telemetry visibility vs RPC-control authorization separation ---')
 
 gw4 = FakeGateway()
-conn4 = BliiotGpioConnector(gw4, base_config, 'bliiot_gpio')
+conn4 = HVAKelvinV1GpioConnector(gw4, base_config, 'hva_kelvin_v1_gpio')
 mangled(conn4, 'init_gpio')()
 gw4.storage.clear()
 
@@ -520,7 +520,7 @@ check('Device B does NOT see DO1 telemetry (DO1 not in its timeseries subset, ev
 print('\n--- 8. server_side_rpc_handler: per-channel method dispatch + per-device authorization ---')
 
 gw5 = FakeGateway()
-conn5 = BliiotGpioConnector(gw5, base_config, 'bliiot_gpio')
+conn5 = HVAKelvinV1GpioConnector(gw5, base_config, 'hva_kelvin_v1_gpio')
 mangled(conn5, 'init_gpio')()
 mangled(conn5, 'poll_di_once')()  # seed __di_state, same as run() does before serving any RPCs
 
@@ -582,7 +582,7 @@ check('getDi from Device A (unrestricted) returns all 8 DI channels',
 print('\n--- 9. on_attributes_update: shared-attribute DO control + per-device authorization ---')
 
 gw6 = FakeGateway()
-conn6 = BliiotGpioConnector(gw6, base_config, 'bliiot_gpio')
+conn6 = HVAKelvinV1GpioConnector(gw6, base_config, 'hva_kelvin_v1_gpio')
 mangled(conn6, 'init_gpio')()
 
 conn6.on_attributes_update({'device': 'Device A - Full', 'data': {'DO2_set': True}})
@@ -602,7 +602,7 @@ check('Device B CAN control DO1 via shared attribute (in its serverSideRpc subse
 print('\n--- 10. WAN attribute fan-out ---')
 
 gw7 = FakeGateway()
-conn7 = BliiotGpioConnector(gw7, base_config, 'bliiot_gpio')
+conn7 = HVAKelvinV1GpioConnector(gw7, base_config, 'hva_kelvin_v1_gpio')
 mangled(conn7, 'fan_out_attribute')({'active_wan_interface': 'ethernet'})
 check('Device A (unrestricted attrs) receives WAN attribute',
       storage_for(gw7, 'Device A - Full', kind='attributes').get('active_wan_interface') == 'ethernet')
@@ -615,7 +615,7 @@ print('\n--- 11. No "attributes" wanStatus entry => WAN reporting fully disabled
 no_wan_cfg = dict(base_config)
 no_wan_cfg['attributes'] = []
 gw8 = FakeGateway()
-conn8 = BliiotGpioConnector(gw8, no_wan_cfg, 'bliiot_gpio')
+conn8 = HVAKelvinV1GpioConnector(gw8, no_wan_cfg, 'hva_kelvin_v1_gpio')
 check('wan_attr is None when no "source": "wanStatus" entry is present', mangled(conn8, 'wan_attr') is None)
 reply = rpc(conn8, gw8, 'Device A - Full', 'getWanStatus')
 check('getWanStatus replies "not configured" when WAN reporting is disabled',
@@ -681,7 +681,7 @@ check('unmapped interface name falls back to reporting the raw interface name (n
 # run it in a real thread for one tick and make sure it's still alive afterwards.
 wan_loop_cfg = dict(base_config)
 gw9 = FakeGateway()
-conn9 = BliiotGpioConnector(gw9, wan_loop_cfg, 'bliiot_gpio')
+conn9 = HVAKelvinV1GpioConnector(gw9, wan_loop_cfg, 'hva_kelvin_v1_gpio')
 mangled(conn9, 'init_gpio')()
 connector_module.subprocess.run = _fake_run_no_default_route
 wan_attr9 = dict(mangled(conn9, 'wan_attr'))
@@ -689,7 +689,7 @@ wan_attr9['pollPeriod'] = 0.05
 # __wan_attr is a private (name-mangled) attribute set in __init__; poke a faster
 # pollPeriod into it the same way the other mangled-name pokes in this script work,
 # then run the real loop body in a thread for a couple of ticks.
-setattr(conn9, '_BliiotGpioConnector__wan_attr', wan_attr9)
+setattr(conn9, '_HVAKelvinV1GpioConnector__wan_attr', wan_attr9)
 wan_thread = threading.Thread(target=mangled(conn9, 'wan_loop'), daemon=True)
 wan_thread.start()
 time.sleep(0.2)
@@ -716,7 +716,7 @@ di_flex_cfg['attributes'] = [
     {'key': 'DI3'},
 ]
 gw13 = FakeGateway()
-conn13 = BliiotGpioConnector(gw13, di_flex_cfg, 'bliiot_gpio')
+conn13 = HVAKelvinV1GpioConnector(gw13, di_flex_cfg, 'hva_kelvin_v1_gpio')
 di_cfg13 = mangled(conn13, 'di_config')
 
 check('DI1 ("attributes" list only) publishes attribute-only',
@@ -745,7 +745,7 @@ conflict_cfg = dict(base_config)
 conflict_cfg['timeseries'] = [{'key': 'DI5', 'offset': 99}]
 conflict_cfg['attributes'] = [{'key': 'DI5', 'offset': 100}]
 try:
-    BliiotGpioConnector(FakeGateway(), conflict_cfg, 'bliiot_gpio')
+    HVAKelvinV1GpioConnector(FakeGateway(), conflict_cfg, 'hva_kelvin_v1_gpio')
     check('conflicting explicit "offset" across timeseries/attributes for the same key raises ValueError',
           False, 'no exception raised')
 except ValueError as e:
@@ -759,7 +759,7 @@ wan_ts_only_cfg = dict(base_config)
 wan_ts_only_cfg['attributes'] = []
 wan_ts_only_cfg['timeseries'] = [{'source': 'wanStatus', 'key': 'active_wan_interface', 'pollPeriod': 3600}]
 gw14a = FakeGateway()
-conn14a = BliiotGpioConnector(gw14a, wan_ts_only_cfg, 'bliiot_gpio')
+conn14a = HVAKelvinV1GpioConnector(gw14a, wan_ts_only_cfg, 'hva_kelvin_v1_gpio')
 wan_attr14a = mangled(conn14a, 'wan_attr')
 check('wanStatus in "timeseries" only => destinations == {timeseries}',
       wan_attr14a['destinations'] == frozenset({'timeseries'}), wan_attr14a)
@@ -770,7 +770,7 @@ wan_both_cfg = dict(base_config)
 wan_both_cfg['timeseries'] = [{'source': 'wanStatus', 'key': 'active_wan_interface'}]
 wan_both_cfg['attributes'] = [{'source': 'wanStatus', 'key': 'active_wan_interface', 'pollPeriod': 3600}]
 gw14b = FakeGateway()
-conn14b = BliiotGpioConnector(gw14b, wan_both_cfg, 'bliiot_gpio')
+conn14b = HVAKelvinV1GpioConnector(gw14b, wan_both_cfg, 'hva_kelvin_v1_gpio')
 wan_attr14b = mangled(conn14b, 'wan_attr')
 check('wanStatus in both lists => destinations == {timeseries, attribute}',
       wan_attr14b['destinations'] == frozenset({'timeseries', 'attribute'}), wan_attr14b)
@@ -790,14 +790,14 @@ print('\n--- 15. wanTraffic config parsing (either list, both, defaults) ---')
 
 no_traffic_cfg = dict(base_config)
 gw15a = FakeGateway()
-conn15a = BliiotGpioConnector(gw15a, no_traffic_cfg, 'bliiot_gpio')
+conn15a = HVAKelvinV1GpioConnector(gw15a, no_traffic_cfg, 'hva_kelvin_v1_gpio')
 check('wan_traffic is None when no "source": "wanTraffic" entry is present',
       mangled(conn15a, 'wan_traffic') is None)
 
 traffic_ts_cfg = dict(base_config)
 traffic_ts_cfg['timeseries'] = [{'source': 'wanTraffic'}]
 gw15b = FakeGateway()
-conn15b = BliiotGpioConnector(gw15b, traffic_ts_cfg, 'bliiot_gpio')
+conn15b = HVAKelvinV1GpioConnector(gw15b, traffic_ts_cfg, 'hva_kelvin_v1_gpio')
 wt15b = mangled(conn15b, 'wan_traffic')
 check('wanTraffic in "timeseries" only, defaults applied',
       wt15b == {'interfaceNames': {'eth0': 'ethernet', 'usb0': 'cellular'}, 'pollIntervalSec': 60,
@@ -811,7 +811,7 @@ traffic_both_cfg['timeseries'] = [{'source': 'wanTraffic'}]
 traffic_both_cfg['attributes'] = [{'source': 'wanTraffic', 'pollIntervalSec': 30, 'resetHour': 6,
                                     'rxKeySuffix': '_in', 'txKeySuffix': '_out'}]
 gw15c = FakeGateway()
-conn15c = BliiotGpioConnector(gw15c, traffic_both_cfg, 'bliiot_gpio')
+conn15c = HVAKelvinV1GpioConnector(gw15c, traffic_both_cfg, 'hva_kelvin_v1_gpio')
 wt15c = mangled(conn15c, 'wan_traffic')
 check('wanTraffic in both lists => destinations == {timeseries, attribute}',
       wt15c['destinations'] == frozenset({'timeseries', 'attribute'}), wt15c)
@@ -824,7 +824,7 @@ print('\n--- 16. wanTraffic helper functions (fake NET_STATS_DIR, missing-interf
 
 import tempfile as _tempfile
 
-_traffic_test_dir = _tempfile.mkdtemp(prefix='bliiot_net_stats_')
+_traffic_test_dir = _tempfile.mkdtemp(prefix='hva_kelvin_v1_net_stats_')
 
 
 def _write_counters(iface, rx, tx):
@@ -892,7 +892,7 @@ check('getWanTraffic replies "not configured" when wanTraffic is not set up',
 
 connector_module.NET_STATS_DIR = _traffic_test_dir
 try:
-    setattr(conn15b, '_BliiotGpioConnector__wan_traffic_baseline', {'eth0': {'rx': 0, 'tx': 0}})
+    setattr(conn15b, '_HVAKelvinV1GpioConnector__wan_traffic_baseline', {'eth0': {'rx': 0, 'tx': 0}})
     reply_full = rpc(conn15b, gw15b, 'Device A - Full', 'getWanTraffic')
     reply_restricted = rpc(conn15b, gw15b, 'Device B - Restricted', 'getWanTraffic')
 finally:
@@ -912,7 +912,7 @@ print('\n--- 18. __wan_traffic_loop: seeds baseline at startup, survives a missi
 loop_cfg = dict(base_config)
 loop_cfg['timeseries'] = [{'source': 'wanTraffic', 'pollIntervalSec': 0.05, 'resetHour': 0}]
 gw18 = FakeGateway()
-conn18 = BliiotGpioConnector(gw18, loop_cfg, 'bliiot_gpio')
+conn18 = HVAKelvinV1GpioConnector(gw18, loop_cfg, 'hva_kelvin_v1_gpio')
 mangled(conn18, 'init_gpio')()
 connector_module.NET_STATS_DIR = _traffic_test_dir
 try:

@@ -142,7 +142,7 @@ DEFAULT_CONNECTORS = {
     "xmpp": "XMPPConnector",
     "ocpp": "OcppConnector",
     "knx": "KNXConnector",
-    "bliiot_gpio": "BliiotGpioConnector",
+    "hva_kelvin_v1_gpio": "HVAKelvinV1GpioConnector",
 }
 
 DEFAULT_STATISTIC = {

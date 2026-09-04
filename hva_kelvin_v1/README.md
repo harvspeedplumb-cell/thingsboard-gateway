@@ -1,4 +1,4 @@
-# BLIIOT X26 GPIO connector
+# HVAKelvinV1 X26 GPIO connector
 
 A ThingsBoard IoT Gateway connector for the BLIIOT BL460AL-CM5002016-X26 IO board (8x DI,
 4x DO), running under stock Raspberry Pi OS on the CM5 carrier board -- no vendor driver,
@@ -15,19 +15,19 @@ cellular-backup failover and that should be visible from the ThingsBoard dashboa
 ## Layout
 
 ```
-thingsboard_gateway/connectors/bliiot_gpio/   the connector itself (installed with the gateway)
+thingsboard_gateway/connectors/hva_kelvin_v1_gpio/   the connector itself (installed with the gateway)
   gpio_map.py                                 board pin mapping, polarity, chip auto-detect
-  bliiot_gpio_connector.py                    Connector implementation
-  bliiot_gpio_uplink_converter.py             device data -> ConvertedData
-  bliiot_gpio_downlink_converter.py           RPC/attribute request -> raw gpiod write
-thingsboard_gateway/config/bliiot_gpio.json   example connector config (default pin map, single device)
-thingsboard_gateway/config/bliiot_gpio_multi_device_example.json
+  hva_kelvin_v1_gpio_connector.py                    Connector implementation
+  hva_kelvin_v1_gpio_uplink_converter.py             device data -> ConvertedData
+  hva_kelvin_v1_gpio_downlink_converter.py           RPC/attribute request -> raw gpiod write
+thingsboard_gateway/config/hva_kelvin_v1_gpio.json   example connector config (default pin map, single device)
+thingsboard_gateway/config/hva_kelvin_v1_gpio_multi_device_example.json
                                                worked example: duplicating DI/DO/WAN
                                                readings to a second, restricted device
-bliiot/                                       this folder -- deployment helpers, not part
+hva_kelvin_v1/                                       this folder -- deployment helpers, not part
                                                of the installed Python package
-  systemd/bliiot-do-safe-reset.py             standalone boot-time DO safety net
-  systemd/bliiot-do-safe-reset.service        systemd unit for the above
+  systemd/hva-kelvin-v1-do-safe-reset.py             standalone boot-time DO safety net
+  systemd/hva-kelvin-v1-do-safe-reset.service        systemd unit for the above
   test/gpio_smoke_test.py                     stand-alone hardware smoke test (run first)
   test/offline_connector_test.py              offline (mocked gpiod) connector logic test --
                                                config parsing, reportOnChange, multi-device
@@ -46,7 +46,7 @@ dropped into `extensions/<type>/` at runtime, or a proper connector shipped insi
 since it's going into your own fork rather than being layered on top of a stock install:
 it's registered in `DEFAULT_CONNECTORS` (`thingsboard_gateway/gateway/constants.py`) and
 listed in `setup.py`'s `packages=[...]`, so it installs and loads exactly like any other
-built-in connector -- you only need `"type": "bliiot_gpio"` (no `"class"` field needed) in
+built-in connector -- you only need `"type": "hva_kelvin_v1_gpio"` (no `"class"` field needed) in
 `tb_gateway.json`.
 
 ## Hardware mapping
@@ -62,7 +62,7 @@ built-in connector -- you only need `"type": "bliiot_gpio"` (no `"class"` field 
 | DI7 | 13 | | | |
 | DI8 | 5  | | | |
 
-These are the defaults baked into `gpio_map.py` and `bliiot_gpio.json`; override any of
+These are the defaults baked into `gpio_map.py` and `hva_kelvin_v1_gpio.json`; override any of
 them per-channel in the config file if a board revision or Y-board ever differs. BCM2,
 6, 14, 15 and 17 (run LED, hardware watchdog, debug UART, network LED) are hard-refused
 by `validate_offsets()` even if a config file tries to use them.
@@ -77,7 +77,7 @@ ACTIVE. Every RPC method, shared attribute, and telemetry key this connector exp
 talks in plain logical `true = ON`/`closed` / `false = OFF`/`open` terms -- the
 inversion is applied internally in `gpio_map.do_state_to_raw()`/`raw_to_do_state()`/
 `raw_to_di_state()` (both default to `active_low=True`, overridable per channel in
-`bliiot_gpio.json` if a dry-contact wiring or board revision ever differs). You never
+`hva_kelvin_v1_gpio.json` if a dry-contact wiring or board revision ever differs). You never
 need to think about it unless you're editing that module.
 
 **DO outputs are "sticky"** -- a line keeps outputting its last value even after the
@@ -91,7 +91,7 @@ reboot -- see "Boot-time safety net" below for how that's covered.
 
 This connector's DI/DO channel abstraction isn't tied to the X26 board specifically --
 BLIIOT's ARMxy BL460 carrier accepts a family of X-series IO daughterboards, and
-`bliiot_gpio.json`'s `"gpio"` block can select which one is fitted:
+`hva_kelvin_v1_gpio.json`'s `"gpio"` block can select which one is fitted:
 
 ```json
 "gpio": {
@@ -118,7 +118,7 @@ size (6-pin: X13/X14/X15/X16; 20-pin: X23/X26/X28), cross-referenced against eac
 own port-name table (manual section 2.2.1). This method was validated by reproducing
 X26's already hardware-confirmed 12-channel mapping exactly from the 20-pin table alone
 -- but every other board here is still a paper derivation until it's actually
-smoke-tested. **Run `bliiot/test/gpio_smoke_test.py --board <type>` on the real board
+smoke-tested. **Run `hva_kelvin_v1/test/gpio_smoke_test.py --board <type>` on the real board
 before trusting it**, the same way the X26 DI polarity bug was originally caught by
 testing rather than assuming. See `gpio_map.py`'s module docstring for the full method
 and per-board sourcing.
@@ -138,7 +138,7 @@ there's nothing to map.
 
 ## Config format (2026-09-04 rewrite -- breaking change)
 
-`bliiot_gpio.json` follows the same top-level shape as the gateway's own built-in
+`hva_kelvin_v1_gpio.json` follows the same top-level shape as the gateway's own built-in
 `bacnet` connector (`thingsboard_gateway/config/bacnet.json`) rather than this
 connector's earlier bespoke shape. **There is no backward-compatible alias for the old
 field names** -- this was a deliberate choice (a clean break, not a transition period),
@@ -192,8 +192,8 @@ channel's entry and the `"source": "wanStatus"` entry can now each be placed in
   for those fields -- the `"timeseries"` list's copy only adds "also publish as
   telemetry" to the destination set.
 
-See `claude/bliiot-gpio-config-reference.md`'s "Destination is list membership" section
-for the full mechanics, and `bliiot/test/offline_connector_test.py` sections 13-14 for
+See `claude/hva-kelvin-v1-gpio-config-reference.md`'s "Destination is list membership" section
+for the full mechanics, and `hva_kelvin_v1/test/offline_connector_test.py` sections 13-14 for
 this exercised offline.
 
 ## WAN traffic: daily Ethernet/cellular byte-volume totals (new, 2026-09-04)
@@ -227,8 +227,8 @@ accumulated so far since the current baseline, on demand.
 fresh, shorter accumulation window rather than resuming the interrupted one, and a
 detected counter reset (interface flap, reboot) is re-baselined rather than carried
 forward, so that day's total for the affected interface undercounts. Fine for a rough
-daily trend, not billing-grade. See `claude/bliiot-gpio-config-reference.md`'s "WAN
-traffic" section for the full field reference, and `bliiot/test/
+daily trend, not billing-grade. See `claude/hva-kelvin-v1-gpio-config-reference.md`'s "WAN
+traffic" section for the full field reference, and `hva_kelvin_v1/test/
 offline_connector_test.py` sections 15-18 for this exercised offline (including the
 missing-interface case against a fake stats directory).
 
@@ -265,9 +265,9 @@ in `bacnet.json`. Each entry in `"devices"` may include its own `"timeseries"`/
 `"attributes"`/`"serverSideRpc"` **subset** list of keys/channels; omitting one of those
 lists for a device means "no restriction, sees/controls everything of that kind" (the
 default, and what every config predating this feature effectively had). See
-`thingsboard_gateway/config/bliiot_gpio_multi_device_example.json` for a full worked
+`thingsboard_gateway/config/hva_kelvin_v1_gpio_multi_device_example.json` for a full worked
 example (a primary unrestricted device plus a second device restricted to `DI1`/`DI2`
-telemetry and `DO1` control only), and `bliiot/test/offline_connector_test.py` (section
+telemetry and `DO1` control only), and `hva_kelvin_v1/test/offline_connector_test.py` (section
 5, 7, 8, 9, 10) for the behaviour this is built on, exercised offline.
 
 This has to happen inside **one** connector instance/one `gpiod` line request rather than
@@ -279,7 +279,7 @@ project's own install-time troubleshooting -- see the migration log). Modbus doe
 this constraint at all -- it's a bus/network protocol, so duplicating a Modbus register to
 two devices is just two ordinary entries in `modbus.json`'s `"master.slaves"` list with
 the same `host`/`port`/`unitId`/`address` and different `deviceName`, no special
-connector-side mechanism needed. `bliiot/test/modbus_duplicate_device_test.py` proves
+connector-side mechanism needed. `hva_kelvin_v1/test/modbus_duplicate_device_test.py` proves
 that end-to-end against the stock, unmodified Modbus connector and a real local Modbus
 TCP test server.
 
@@ -314,14 +314,14 @@ physical DI sampling/debounce rate, needed for debounce accuracy regardless of
 ## Migrating an existing config
 
 There is no compatibility shim for the old field names -- an old-format
-`bliiot_gpio.json` (`"digitalInputs"`/`"digitalOutputs"`/`"wanStatus"`/
+`hva_kelvin_v1_gpio.json` (`"digitalInputs"`/`"digitalOutputs"`/`"wanStatus"`/
 `"heartbeatIntervalSec"`) makes the connector fail to start, not silently misbehave, but
 it **will** stop the connector, so treat this like any other breaking config change:
 
-1. Back up the current `bliiot_gpio.json` before touching it.
+1. Back up the current `hva_kelvin_v1_gpio.json` before touching it.
 2. Rewrite it against the new shape (the table under "Config format" above maps every
    old field to its replacement 1:1) -- or start from
-   `thingsboard_gateway/config/bliiot_gpio.json` in this delivery and reapply your
+   `thingsboard_gateway/config/hva_kelvin_v1_gpio.json` in this delivery and reapply your
    site-specific overrides (non-default `boardType`, any custom/renamed channels,
    non-default WAN `interfaceNames`, etc.).
 3. If you were relying on the old generic `setDo`/`getDo` RPC methods from an external
@@ -353,7 +353,7 @@ keep working once the connector is back up.
    version matches what `gpioget --version`/`gpioset --help` report for the CLI tools
    already validated on this box.
 
-2. Copy/merge `thingsboard_gateway/config/bliiot_gpio.json` into the gateway's config
+2. Copy/merge `thingsboard_gateway/config/hva_kelvin_v1_gpio.json` into the gateway's config
    directory (wherever `tb_gateway.json` and the other connector configs live, e.g.
    `/etc/thingsboard-gateway/config/` on a `.deb` install, or `thingsboard_gateway/config/`
    in a source checkout).
@@ -362,9 +362,9 @@ keep working once the connector is back up.
 
    ```json
    {
-     "name": "BLIIOT X26 GPIO Connector",
-     "type": "bliiot_gpio",
-     "configuration": "bliiot_gpio.json"
+     "name": "HVAKelvinV1 X26 GPIO Connector",
+     "type": "hva_kelvin_v1_gpio",
+     "configuration": "hva_kelvin_v1_gpio.json"
    }
    ```
 
@@ -382,7 +382,7 @@ Run the smoke test directly on the box first, outside the gateway:
 
 ```
 cd thingsboard-gateway   # this repo checkout
-python3 bliiot/test/gpio_smoke_test.py
+python3 hva_kelvin_v1/test/gpio_smoke_test.py
 ```
 
 Read-only by default: it reports the gpiochip it found, the current state of every
@@ -400,14 +400,14 @@ against the real box**, because at the time this was built, SSH/network access t
 freshly-reflashed OS was still being restored (see the migration log's "Current
 status"). Treat the smoke test above as the first real-hardware checkpoint.
 
-Before that, `bliiot/test/offline_connector_test.py` exercises the connector's config
+Before that, `hva_kelvin_v1/test/offline_connector_test.py` exercises the connector's config
 parsing and RPC/telemetry/authorization logic end-to-end against a mocked `gpiod` and a
 mocked ThingsBoard gateway boundary (no real hardware, no installed `thingsboard_gateway`
-package needed) -- run it from the repo root after any change to `bliiot_gpio_connector.py`
+package needed) -- run it from the repo root after any change to `hva_kelvin_v1_gpio_connector.py`
 or its config schema:
 
 ```
-python3 bliiot/test/offline_connector_test.py
+python3 hva_kelvin_v1/test/offline_connector_test.py
 ```
 
 It covers the 2026-09-04 schema rewrite specifically: `timeseries`/`attributes`/
@@ -471,7 +471,7 @@ finding on Kelvin26001 (2026-09-03): the attribute used to be published on-chang
 so if the platform ever lost it independently of the interface actually changing (e.g.
 the gateway device being deleted and recreated on the platform), it would stay
 blank/stale until the connector process was restarted. The resend bounds that to one
-poll interval, with no restart needed. See `bliiot/test/offline_connector_test.py`
+poll interval, with no restart needed. See `hva_kelvin_v1/test/offline_connector_test.py`
 section 12 for the no-modem/no-default-route case specifically. WAN traffic (if
 configured) publishes its daily `<friendly><rxKeySuffix>`/`<friendly><txKeySuffix>`
 totals once per `"resetHour"` rollover -- see "WAN traffic" above.
@@ -483,10 +483,10 @@ it does not depend on the gateway package or venv at all, so it keeps working ev
 those are broken or not yet started:
 
 ```
-sudo cp bliiot/systemd/bliiot-do-safe-reset.py /opt/bliiot/bliiot-do-safe-reset.py
-sudo cp bliiot/systemd/bliiot-do-safe-reset.service /etc/systemd/system/
+sudo cp hva_kelvin_v1/systemd/hva-kelvin-v1-do-safe-reset.py /opt/hva-kelvin-v1/hva-kelvin-v1-do-safe-reset.py
+sudo cp hva_kelvin_v1/systemd/hva-kelvin-v1-do-safe-reset.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable bliiot-do-safe-reset.service
+sudo systemctl enable hva-kelvin-v1-do-safe-reset.service
 ```
 
 It needs `python3-libgpiod` on the system Python (not just the gateway's venv) --

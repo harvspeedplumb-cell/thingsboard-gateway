@@ -1,6 +1,6 @@
 {
   "//": "Example only -- NOT the default config. Copy the relevant bits into your own",
-  "// 2": "bliiot_gpio.json rather than using this file verbatim. Demonstrates duplicating",
+  "// 2": "hva_kelvin_v1_gpio.json rather than using this file verbatim. Demonstrates duplicating",
   "// 3": "physical DI/DO/WAN readings to more than one ThingsBoard device from a single",
   "// 4": "connector instance, the same pattern the built-in BACnet connector already",
   "// 5": "supports by listing the same object under two 'devices' blocks -- see this",
@@ -12,9 +12,9 @@
   "// 11": "BOTH 'timeseries' and 'attributes' below, so it publishes both ways; wanStatus is",
   "// 12": "listed in both lists too (the 'attributes' copy's fields win on any conflict); and",
   "// 13": "wanTraffic is listed in 'attributes' only here (rather than 'timeseries', as in the",
-  "// 14": "default bliiot_gpio.json) just to show it works there too -- pick whichever",
+  "// 14": "default hva_kelvin_v1_gpio.json) just to show it works there too -- pick whichever",
   "// 15": "destination(s) suit your dashboard/rule-chain setup.",
-  "name": "BLIIOT X26 GPIO Connector",
+  "name": "HVAKelvinV1 X26 GPIO Connector",
   "logLevel": "INFO",
   "gpio": {
     "boardType": "X26",
@@ -68,17 +68,17 @@
   "devices": [
     {
       "//": "Primary device: sees and controls everything -- omitting timeseries/attributes/serverSideRpc entirely means 'no restriction'.",
-      "name": "BLIIOT X26 IO",
+      "name": "HVAKelvinV1 X26 IO",
       "type": "default",
-      "converter": "BliiotGpioUplinkConverter",
-      "downlink_converter": "BliiotGpioDownlinkConverter"
+      "converter": "HVAKelvinV1GpioUplinkConverter",
+      "downlink_converter": "HVAKelvinV1GpioDownlinkConverter"
     },
     {
       "//": "Second device, duplicating a SUBSET of the same physical inputs/outputs/WAN status to a different ThingsBoard device -- e.g. a restricted dashboard, or a separate customer/tenant device that should only ever see DI1/DI2 (say, a door/security-panel pair) and may only ever switch DO1 (say, a single shared alarm relay), never the other 3 DO channels or any other DI. It never sees the WAN attribute at all (an empty attributes list, not an omitted one).",
-      "name": "BLIIOT X26 IO - Security Subset",
+      "name": "HVAKelvinV1 X26 IO - Security Subset",
       "type": "default",
-      "converter": "BliiotGpioUplinkConverter",
-      "downlink_converter": "BliiotGpioDownlinkConverter",
+      "converter": "HVAKelvinV1GpioUplinkConverter",
+      "downlink_converter": "HVAKelvinV1GpioDownlinkConverter",
       "timeseries": ["DI1", "DI2"],
       "serverSideRpc": ["DO1"],
       "attributes": []

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
 Stand-alone hardware smoke test for a BLIIOT X-series board's DI/DO channels, meant to be
-run directly on the box (not through the gateway) before trusting BliiotGpioConnector.
+run directly on the box (not through the gateway) before trusting HVAKelvinV1GpioConnector.
 
 Run from a checkout of this repo so the `thingsboard_gateway` package is importable,
 e.g.:
 
     cd thingsboard-gateway
-    python3 bliiot/test/gpio_smoke_test.py
+    python3 hva_kelvin_v1/test/gpio_smoke_test.py
 
 By default this is READ-ONLY and SAFE, and assumes an X26 board (this connector's only
 hardware-confirmed board type): it reports which gpiochip it found, prints the current
@@ -30,7 +30,7 @@ import time
 
 sys.path.insert(0, '.')
 
-from thingsboard_gateway.connectors.bliiot_gpio.gpio_map import (  # noqa: E402
+from thingsboard_gateway.connectors.hva_kelvin_v1_gpio.gpio_map import (  # noqa: E402
     BOARD_PIN_MAPS,
     DEFAULT_BOARD_TYPE,
     GpioMapError,
@@ -69,12 +69,12 @@ def main():
     print(f"Board type: {args.board} ({len(di_offsets_by_name)} DI, {len(do_offsets_by_name)} DO)")
 
     di_settings = {offset: gpiod.LineSettings(direction=Direction.INPUT) for offset in di_offsets_by_name.values()}
-    di_request = gpiod.request_lines(chip_path, consumer='bliiot-gpio-smoke-test-di', config=di_settings)
+    di_request = gpiod.request_lines(chip_path, consumer='hva-kelvin-v1-gpio-smoke-test-di', config=di_settings)
 
     do_settings = {offset: gpiod.LineSettings(direction=Direction.OUTPUT,
                                                output_value=do_state_to_raw(SAFE_DO_STATE))
                    for offset in do_offsets_by_name.values()}
-    do_request = gpiod.request_lines(chip_path, consumer='bliiot-gpio-smoke-test-do', config=do_settings)
+    do_request = gpiod.request_lines(chip_path, consumer='hva-kelvin-v1-gpio-smoke-test-do', config=do_settings)
 
     try:
         di_offsets = list(di_offsets_by_name.values())

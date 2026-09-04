@@ -18,7 +18,7 @@ Everything in this module was derived empirically against real hardware during t
 Raspberry Pi OS migration project (see the project's migration log) and is kept
 separate from the connector/converter classes so it can be reused by out-of-gateway
 tooling too (e.g. the standalone smoke-test script and the systemd boot-time safe-reset
-script under bliiot/, neither of which should have to depend on the gateway package).
+script under hva_kelvin_v1/, neither of which should have to depend on the gateway package).
 
 Key confirmed facts (do not change these without re-verifying on real hardware):
 
@@ -39,7 +39,7 @@ Key confirmed facts (do not change these without re-verifying on real hardware):
   to a safe default on its own. The connector MUST explicitly drive every DO line to
   its safe (OFF/open) state on startup, which is why SAFE_DO_STATE and
   force_do_lines_safe() exist and are used both by the connector and by the
-  independent systemd boot-time script in bliiot/systemd/.
+  independent systemd boot-time script in hva_kelvin_v1/systemd/.
 * DI is ALSO inverted, the same way DO is -- confirmed 2026-09-03 on real hardware
   (Kelvin26001, an X26 board): with nothing wired to any of the 8 DI terminals
   (confirmed with the user), every channel read raw ACTIVE. The datasheet defines
@@ -95,7 +95,7 @@ try:
 except ImportError:
     # The connector itself already handles installing gpiod via TBUtility.install_package
     # before importing this module; this bare import is kept here too so this module can
-    # also be used stand-alone (e.g. from bliiot/systemd/bliiot-do-safe-reset.py) without
+    # also be used stand-alone (e.g. from hva_kelvin_v1/systemd/hva-kelvin-v1-do-safe-reset.py) without
     # pulling in the gateway package at all.
     gpiod = None
     Direction = None
@@ -253,7 +253,7 @@ def find_rp1_gpiochip(preferred=None, chip_label=RP1_CHIP_LABEL):
 
     raise GpioMapError(
         f"No gpiochip with label containing '{chip_label}' found among: {candidates}. "
-        "Run `gpiodetect` on the box and check thingsboard_gateway/config/bliiot_gpio.json's "
+        "Run `gpiodetect` on the box and check thingsboard_gateway/config/hva_kelvin_v1_gpio.json's "
         "\"gpio\".\"chip\" setting -- the RP1 chip index is known to move across reflashes."
     )
 
@@ -296,14 +296,14 @@ def raw_to_di_state(value, active_low: bool = True) -> bool:
     return value == Value.ACTIVE
 
 
-def force_do_lines_safe(chip_path, do_offsets, consumer="bliiot-do-safe-reset", active_low_by_offset=None):
+def force_do_lines_safe(chip_path, do_offsets, consumer="hva-kelvin-v1-do-safe-reset", active_low_by_offset=None):
     """
     Standalone helper: open the given DO offsets on chip_path as outputs, immediately
     drive every one of them to the safe (OFF/open) state, and release the request.
 
     This is intentionally self-contained (no gateway imports) so it can be called both
     by the connector's own startup path and by the independent systemd boot-time script
-    in bliiot/systemd/bliiot-do-safe-reset.py, which must keep working even if the
+    in hva_kelvin_v1/systemd/hva-kelvin-v1-do-safe-reset.py, which must keep working even if the
     gateway itself is broken or not yet running.
 
     :param active_low_by_offset: optional {offset: bool} map for per-channel polarity;
