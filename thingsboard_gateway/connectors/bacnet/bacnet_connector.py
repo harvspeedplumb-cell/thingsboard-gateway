@@ -576,11 +576,24 @@ class AsyncBACnetConnector(Thread, Connector):
         iter = await self.__application.get_device_values(device)
         if iter is not None:
             all_done = False
+            # A single poll of a device can require several ReadPropertyMultiple requests
+            # (see ObjectIterator.get_limit(), which caps the objects-per-request count based
+            # on the device's advertised max APDU length). Every chunk used to be queued for
+            # conversion separately, so uplink_converter.convert() ran once per chunk and each
+            # run produced its own timestamp - splitting a single poll into several telemetry
+            # messages (see #2104/#2112). Accumulate every chunk here and hand the whole poll's
+            # data to the converter in one call so it becomes a single telemetry message.
+            combined_config = []
+            combined_results = []
             while not self.__stopped and not all_done:
                 results, config, all_done = await iter.get_next()
                 if len(results) > 0:
                     self.__log.trace('%s reading results: %s', device, results)
-                    self.__data_to_convert_queue.put_nowait((device, config, results))
+                    combined_config.extend(config)
+                    combined_results.extend(results)
+
+            if len(combined_results) > 0:
+                self.__data_to_convert_queue.put_nowait((device, combined_config, combined_results))
 
         reading_ended = monotonic()
         current_reading_time = reading_ended - reading_started
