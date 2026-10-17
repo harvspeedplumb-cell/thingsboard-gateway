@@ -28,6 +28,10 @@ SUPPORTED_OBJECTS_TYPES = {
     '3': 'binaryInput',
     '4': 'binaryOutput',
     '5': 'binaryValue',
+    '13': 'multiStateInput',
+    '14': 'multiStateOutput',
+    '17': 'schedule',
+    '19': 'multiStateValue',
 }
 GET_RPC_PATTERN = (
     r'^objectType=(?P<objectType>[A-Za-z]+);'

@@ -161,7 +161,8 @@ class BacnetReservedRpcTestCase(BacnetBaseTestCase):
         self.assertEqual(response.id, 118)
         self.assertIn("error", response.message)
         self.assertEqual(
-            "The objectType must be from '['analogInput', 'analogOutput', 'analogValue', 'binaryInput', 'binaryOutput', 'binaryValue'], but got'binaryInputs",
+            "The objectType must be from '['analogInput', 'analogOutput', 'analogValue', 'binaryInput', 'binaryOutput', 'binaryValue', "
+            "'multiStateInput', 'multiStateOutput', 'schedule', 'multiStateValue'], but got'binaryInputs",
             response.message["error"])
 
     async def test_set_reserved_rpc_with_incorrect_object_id(self):
@@ -328,7 +329,7 @@ class BacnetDeviceRpcTest(BacnetBaseTestCase):
         self.assertIn("error", response.message)
         self.assertEqual("Invalid objectType: 'binaryValuessss'. Expected one of ['analogInput', "
                          "'analogOutput', 'analogValue', 'binaryInput', 'binaryOutput', "
-                         "'binaryValue']."
+                         "'binaryValue', 'multiStateInput', 'multiStateOutput', 'schedule', 'multiStateValue']."
                          ,
                          response.message["error"])
 

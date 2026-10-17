@@ -17,6 +17,7 @@ from time import time
 
 from bacpypes3.basetypes import DateTime
 from bacpypes3.constructeddata import AnyAtomic, Array
+from bacpypes3.primitivedata import Null, Unsigned, Integer, Real, Double
 from bacpypes3.basetypes import (
     ErrorType,
     PriorityValue,
@@ -67,7 +68,7 @@ class AsyncBACnetUplinkConverter(AsyncBACnetConverter):
                                                                                device_report_strategy,
                                                                                item_config,
                                                                                self.__log)
-                        payload = {datapoint_key: round(unsed_values[0]['value'], 2) if isinstance(unsed_values[0]['value'], float) else str(unsed_values[0]['value'])}  # noqa
+                        payload = {datapoint_key: self._format_value(unsed_values[0]['value'])}
                         payload['ts'] = received_data_ts
                         converted_data_append_methods[item_config['type']](payload)  # noqa
                     else:
@@ -76,7 +77,7 @@ class AsyncBACnetUplinkConverter(AsyncBACnetConverter):
                                                                                    device_report_strategy,
                                                                                    item_config,
                                                                                    self.__log)
-                            payload = {datapoint_key: round(item['value'], 2) if isinstance(item['value'], float) else str(item['value'])}  # noqa
+                            payload = {datapoint_key: self._format_value(item['value'])}
                             payload['ts'] = received_data_ts
                             converted_data_append_methods[item_config['type']](payload)  # noqa
             except Exception as e:
@@ -110,8 +111,18 @@ class AsyncBACnetUplinkConverter(AsyncBACnetConverter):
                 if isinstance(value, DateTime):
                     value = value.isoformat()
                 elif isinstance(value, AnyAtomic):
-                    value = str(value.get_value())
+                    # e.g. Schedule presentValue / scheduleDefault: unwrap to the
+                    # same representation the underlying atomic type gets elsewhere
+                    value = self._unwrap_any_atomic(value)
+                    if value is None:
+                        self.__log.debug("Skipping Null value for objectId: \"%s\", propertyId: \"%s\"",
+                                         object_id, value_prop_id)
+                        continue
                 elif isinstance(value, BinaryPV):
+                    # kept as a string ("0"/"1") for backward compatibility
+                    value = str(int(value))
+                elif isinstance(value, (Unsigned, Integer)):
+                    # e.g. Multi-state Input/Output/Value presentValue: send as a number
                     value = int(value)
                 elif isinstance(value, ObjectPropertyReference):
                     result = {
@@ -124,8 +135,9 @@ class AsyncBACnetUplinkConverter(AsyncBACnetConverter):
                     result = []
                     for item in value:
                         if isinstance(item, PriorityValue):
-                            result.append(str(getattr(item, item._choice)))
-                        if isinstance(item, DailySchedule):
+                            choice_value = getattr(item, item._choice)
+                            result.append(None if isinstance(choice_value, Null) else str(choice_value))
+                        elif isinstance(item, DailySchedule):
                             schedular_array = []
                             for sched in item.daySchedule:
                                 schedular_array.append((str(sched.time), str(sched.value.get_value())))
@@ -145,6 +157,25 @@ class AsyncBACnetUplinkConverter(AsyncBACnetConverter):
                 self.__log.error("Error converting datapoint %s: %s", value_obj, e)
 
         return converted_data
+
+    @staticmethod
+    def _unwrap_any_atomic(value: AnyAtomic):
+        inner = value.get_value()
+        if isinstance(inner, Null):
+            return None
+        if isinstance(inner, (Real, Double)):
+            return float(inner)
+        if isinstance(inner, (Unsigned, Integer)):
+            return int(inner)
+        return str(inner)
+
+    @staticmethod
+    def _format_value(value):
+        if isinstance(value, float):
+            return round(value, 2)
+        if type(value) is int:  # noqa: E721 - plain ints only, not BACnet Boolean/Enumerated subclasses
+            return value
+        return str(value)
 
     def _get_device_report_strategy(self, report_strategy, device_name):
         try:
